@@ -32,20 +32,20 @@ import org.openflow.util.HexString;
 public class Ethernet extends BasePacket {
     private static String HEXES = "0123456789ABCDEF";
     public static final short TYPE_ARP = 0x0806;
+    public static final short TYPE_RARP = (short) 0x8035;
     public static final short TYPE_IPv4 = 0x0800;
     public static final short TYPE_LLDP = (short) 0x88cc;
     public static final short TYPE_BSN = (short) 0x8942;
     public static final short VLAN_UNTAGGED = (short)0xffff;
-    public static final short TYPE_BDDP = (short) 0x8999;
     public static final short DATALAYER_ADDRESS_LENGTH = 6; // bytes
     public static Map<Short, Class<? extends IPacket>> etherTypeClassMap;
 
     static {
         etherTypeClassMap = new HashMap<Short, Class<? extends IPacket>>();
         etherTypeClassMap.put(TYPE_ARP, ARP.class);
+        etherTypeClassMap.put(TYPE_RARP, ARP.class);
         etherTypeClassMap.put(TYPE_IPv4, IPv4.class);
         etherTypeClassMap.put(TYPE_LLDP, LLDP.class);
-        etherTypeClassMap.put(TYPE_BDDP, BDDP.class);
         etherTypeClassMap.put(TYPE_BSN, BSN.class);
     }
 
@@ -329,6 +329,8 @@ public class Ethernet extends BasePacket {
         int result = super.hashCode();
         result = prime * result + destinationMACAddress.hashCode();
         result = prime * result + etherType;
+        result = prime * result + vlanID;
+        result = prime * result + priorityCode;
         result = prime * result + (pad ? 1231 : 1237);
         result = prime * result + sourceMACAddress.hashCode();
         return result;

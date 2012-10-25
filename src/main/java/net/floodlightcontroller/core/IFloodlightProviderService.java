@@ -76,7 +76,7 @@ public interface IFloodlightProviderService extends IFloodlightService {
     public Map<OFType, List<IOFMessageListener>> getListeners();
 
     /**
-     * Returns a list of all actively connected OpenFlow switches. This doesn't
+     * Returns an unmodifiable map of all actively connected OpenFlow switches. This doesn't
      * contain switches that are connected but the controller's in the slave role.
      * @return the set of actively connected switches
      */
@@ -198,5 +198,13 @@ public interface IFloodlightProviderService extends IFloodlightService {
     * @return
     */
    public long getSystemStartTime();
+   
+   /**
+    * Configure controller to always clear the flow table on the switch,
+    * when it connects to controller. This will be true for first time switch
+    * reconnect, as well as a switch re-attaching to Controller after HA
+    * switch over to ACTIVE role
+    */
+   public void setAlwaysClearFlowsOnSwAdd(boolean value);
 
 }

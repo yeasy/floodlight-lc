@@ -57,6 +57,8 @@ import net.floodlightcontroller.core.IListener.Command;
 import net.floodlightcontroller.core.IOFSwitch;
 import net.floodlightcontroller.core.IOFSwitchFilter;
 import net.floodlightcontroller.core.IOFSwitchListener;
+import net.floodlightcontroller.core.annotations.LogMessageDoc;
+import net.floodlightcontroller.core.annotations.LogMessageDocs;
 import net.floodlightcontroller.core.internal.OFChannelState.HandshakeState;
 import net.floodlightcontroller.core.util.ListenerDispatcher;
 import net.floodlightcontroller.core.web.CoreWebRoutable;
@@ -135,6 +137,9 @@ public class Controller implements IFloodlightProviderService,
             IStorageSourceListener {
     
     protected static Logger log = LoggerFactory.getLogger(Controller.class);
+
+    private static final String ERROR_DATABASE = 
+            "The controller could not communicate with the system database.";
     
     protected BasicFactory factory;
     protected ConcurrentMap<OFType,
@@ -182,6 +187,9 @@ public class Controller implements IFloodlightProviderService,
     
     // Start time of the controller
     protected long systemStartTime;
+    
+    // Flag to always flush flow table on switch reconnect (HA or otherwise)
+    protected boolean alwaysClearFlowsOnSwAdd = false;
     
     // Storage table names
     protected static final String CONTROLLER_TABLE_NAME = "controller_controller";
@@ -238,27 +246,39 @@ public class Controller implements IFloodlightProviderService,
          */
         public void dispatch();
     }
+    public enum SwitchUpdateType {
+        ADDED,
+        REMOVED,
+        PORTCHANGED
+    }
     /**
      * Update message indicating a switch was added or removed 
      */
     protected class SwitchUpdate implements IUpdate {
         public IOFSwitch sw;
-        public boolean added;
-        public SwitchUpdate(IOFSwitch sw, boolean added) {
+        public SwitchUpdateType switchUpdateType;
+        public SwitchUpdate(IOFSwitch sw, SwitchUpdateType switchUpdateType) {
             this.sw = sw;
-            this.added = added;
+            this.switchUpdateType = switchUpdateType;
         }
         public void dispatch() {
-            if (log.isDebugEnabled()) {
-                log.debug("Dispatching switch update {} {}",
-                        sw, added);
+            if (log.isTraceEnabled()) {
+                log.trace("Dispatching switch update {} {}",
+                        sw, switchUpdateType);
             }
             if (switchListeners != null) {
                 for (IOFSwitchListener listener : switchListeners) {
-                    if (added)
-                        listener.addedSwitch(sw);
-                    else
-                        listener.removedSwitch(sw);
+                    switch(switchUpdateType) {
+                        case ADDED:
+                            listener.addedSwitch(sw);
+                            break;
+                        case REMOVED:
+                            listener.removedSwitch(sw);
+                            break;
+                        case PORTCHANGED:
+                            listener.switchPortChanged(sw.getId());
+                            break;
+                    }
                 }
             }
         }
@@ -275,8 +295,17 @@ public class Controller implements IFloodlightProviderService,
             this.newRole = newRole;
         }
         public void dispatch() {
-            if (log.isDebugEnabled()) {
-                log.debug("Dispatching HA Role update newRole = {}, oldRole = {}",
+            // Make sure that old and new roles are different.
+            if (oldRole == newRole) {
+                if (log.isTraceEnabled()) {
+                    log.trace("HA role update ignored as the old and " +
+                              "new roles are the same. newRole = {}" +
+                              "oldRole = {}", newRole, oldRole);
+                }
+                return;
+            }
+            if (log.isTraceEnabled()) {
+                log.trace("Dispatching HA Role update newRole = {}, oldRole = {}",
                           newRole, oldRole);
             }
             if (haListeners != null) {
@@ -304,8 +333,8 @@ public class Controller implements IFloodlightProviderService,
             this.removedControllerNodeIPs = removedControllerNodeIPs;
         }
         public void dispatch() {
-            if (log.isDebugEnabled()) {
-                log.debug("Dispatching HA Controller Node IP update "
+            if (log.isTraceEnabled()) {
+                log.trace("Dispatching HA Controller Node IP update "
                         + "curIPs = {}, addedIPs = {}, removedIPs = {}",
                         new Object[] { curControllerNodeIPs, addedControllerNodeIPs,
                             removedControllerNodeIPs }
@@ -354,6 +383,10 @@ public class Controller implements IFloodlightProviderService,
     @Override
     public void setRole(Role role) {
         if (role == null) throw new NullPointerException("Role can not be null.");
+        if (role == Role.MASTER && this.role == Role.SLAVE) {
+            // Reset db state to Inactive for all switches. 
+            updateAllInactiveSwitchInfo();
+        }
         
         // Need to synchronize to ensure a reliable ordering on role request
         // messages send and to ensure the list of connected switches is stable
@@ -411,6 +444,9 @@ public class Controller implements IFloodlightProviderService,
         }
 
         @Override
+        @LogMessageDoc(message="New switch connection from {ip address}",
+                       explanation="A new switch has connected from the " + 
+                                "specified IP address")
         public void channelConnected(ChannelHandlerContext ctx,
                                      ChannelStateEvent e) throws Exception {
             log.info("New switch connection from {}",
@@ -428,6 +464,8 @@ public class Controller implements IFloodlightProviderService,
         }
 
         @Override
+        @LogMessageDoc(message="Disconnected switch {switch information}",
+                       explanation="The specified switch has disconnected.")
         public void channelDisconnected(ChannelHandlerContext ctx,
                                         ChannelStateEvent e) throws Exception {
             if (sw != null && state.hsState == HandshakeState.READY) {
@@ -446,6 +484,47 @@ public class Controller implements IFloodlightProviderService,
         }
 
         @Override
+        @LogMessageDocs({
+            @LogMessageDoc(level="ERROR",
+                    message="Disconnecting switch {switch} due to read timeout",
+                    explanation="The connected switch has failed to send any " + 
+                                "messages or respond to echo requests",
+                    recommendation=LogMessageDoc.CHECK_SWITCH),
+            @LogMessageDoc(level="ERROR",
+                    message="Disconnecting switch {switch}: failed to " + 
+                            "complete handshake",
+                    explanation="The switch did not respond correctly " + 
+                                "to handshake messages",
+                    recommendation=LogMessageDoc.CHECK_SWITCH),
+            @LogMessageDoc(level="ERROR",
+                    message="Disconnecting switch {switch} due to IO Error: {}",
+                    explanation="There was an error communicating with the switch",
+                    recommendation=LogMessageDoc.CHECK_SWITCH),
+            @LogMessageDoc(level="ERROR",
+                    message="Disconnecting switch {switch} due to switch " + 
+                            "state error: {error}",
+                    explanation="The switch sent an unexpected message",
+                    recommendation=LogMessageDoc.CHECK_SWITCH),
+            @LogMessageDoc(level="ERROR",
+                    message="Disconnecting switch {switch} due to " +
+                            "message parse failure",
+                    explanation="Could not parse a message from the switch",
+                    recommendation=LogMessageDoc.CHECK_SWITCH),
+            @LogMessageDoc(level="ERROR",
+                    message="Terminating controller due to storage exception",
+                    explanation=ERROR_DATABASE,
+                    recommendation=LogMessageDoc.CHECK_CONTROLLER),
+            @LogMessageDoc(level="ERROR",
+                    message="Could not process message: queue full",
+                    explanation="OpenFlow messages are arriving faster than " +
+                                " the controller can process them.",
+                    recommendation=LogMessageDoc.CHECK_CONTROLLER),
+            @LogMessageDoc(level="ERROR",
+                    message="Error while processing message " +
+                            "from switch {switch} {cause}",
+                    explanation="An error occurred processing the switch message",
+                    recommendation=LogMessageDoc.GENERIC_ACTION)
+        })
         public void exceptionCaught(ChannelHandlerContext ctx, ExceptionEvent e)
                 throws Exception {
             if (e.getCause() instanceof ReadTimeoutException) {
@@ -519,6 +598,11 @@ public class Controller implements IFloodlightProviderService,
         /**
          * Process the request for the switch description
          */
+        @LogMessageDoc(level="ERROR",
+                message="Exception in reading description " + 
+                        " during handshake {exception}",
+                explanation="Could not process the switch description string",
+                recommendation=LogMessageDoc.CHECK_SWITCH)
         void processSwitchDescReply() {
             try {
                 // Read description, if it has been updated
@@ -587,7 +671,7 @@ public class Controller implements IFloodlightProviderService,
                 // Ignore
             } catch (Exception ex) {
                 log.error("Exception in reading description " + 
-                          " during handshake - {}", ex);
+                          " during handshake", ex);
             }
         }
 
@@ -652,7 +736,7 @@ public class Controller implements IFloodlightProviderService,
                         // If role is MASTER we will promote switch to active
                         // list when we receive the switch's role reply messages
                         log.debug("This controller's role is {}, " + 
-                        		"sending initial role request msg to {}",
+                                "sending initial role request msg to {}",
                                 role, sw);
                         Collection<OFSwitchImpl> swList = new ArrayList<OFSwitchImpl>(1);
                         swList.add(sw);
@@ -662,7 +746,7 @@ public class Controller implements IFloodlightProviderService,
                         // Role supported not enabled on controller (for now)
                         // automatically promote switch to active state. 
                         log.debug("This controller's role is null, " + 
-                        		"not sending role request msg to {}",
+                                "not sending role request msg to {}",
                                 role, sw);
                         // Need to clear FlowMods before we add the switch
                         // and dispatch updates otherwise we have a race condition.
@@ -685,6 +769,11 @@ public class Controller implements IFloodlightProviderService,
          * removedSwitch notification):1
          * 
          */
+        @LogMessageDoc(level="ERROR",
+                message="Invalid role value in role reply message",
+                explanation="Was unable to set the HA role (master or slave) " +
+                        "for the controller.",
+                recommendation=LogMessageDoc.CHECK_CONTROLLER)
         protected void handleRoleReplyMessage(OFVendor vendorMessage,
                                     OFRoleReplyVendorData roleReplyVendorData) {
             // Map from the role code in the message to our role enum
@@ -717,20 +806,8 @@ public class Controller implements IFloodlightProviderService,
             if (!isActive && sw.isActive()) {
                 // Transition from SLAVE to MASTER.
                 
-                // Some switches don't seem to update us with port
-                // status messages while in slave role.
-                readSwitchPortStateFromStorage(sw);                
-                // Only add the switch to the active switch list if 
-                // we're not in the slave role. Note that if the role 
-                // attribute is null, then that means that the switch 
-                // doesn't support the role request messages, so in that
-                // case we're effectively in the EQUAL role and the 
-                // switch should be included in the active switch list.
-                addSwitch(sw);
-                log.debug("Added master switch {} to active switch list",
-                         HexString.toHexString(sw.getId()));
-                    
-                if (!state.firstRoleReplyReceived) {
+                if (!state.firstRoleReplyReceived || 
+                    getAlwaysClearFlowsOnSwAdd()) {
                     // This is the first role-reply message we receive from
                     // this switch or roles were disabled when the switch
                     // connected: 
@@ -756,6 +833,21 @@ public class Controller implements IFloodlightProviderService,
                               "clear FlowTable to active switch list",
                              HexString.toHexString(sw.getId()));
                 }
+                
+                // Some switches don't seem to update us with port
+                // status messages while in slave role.
+                readSwitchPortStateFromStorage(sw);                
+                
+                // Only add the switch to the active switch list if 
+                // we're not in the slave role. Note that if the role 
+                // attribute is null, then that means that the switch 
+                // doesn't support the role request messages, so in that
+                // case we're effectively in the EQUAL role and the 
+                // switch should be included in the active switch list.
+                addSwitch(sw);
+                log.debug("Added master switch {} to active switch list",
+                         HexString.toHexString(sw.getId()));
+
             } 
             else if (isActive && !sw.isActive()) {
                 // Transition from MASTER to SLAVE: remove switch 
@@ -769,7 +861,7 @@ public class Controller implements IFloodlightProviderService,
             state.firstRoleReplyReceived = true;
         }
 
-		protected boolean handleVendorMessage(OFVendor vendorMessage) {
+        protected boolean handleVendorMessage(OFVendor vendorMessage) {
             boolean shouldHandleMessage = false;
             int vendor = vendorMessage.getVendor();
             switch (vendor) {
@@ -805,13 +897,32 @@ public class Controller implements IFloodlightProviderService,
          * @throws IOException
          * @throws SwitchStateException 
          */
+        @LogMessageDocs({
+            @LogMessageDoc(level="WARN",
+                    message="Config Reply from {switch} has " +
+                            "miss length set to {length}",
+                    explanation="The controller requires that the switch " +
+                            "use a miss length of 0xffff for correct " +
+                            "function",
+                    recommendation="Use a different switch to ensure " +
+                            "correct function"),
+            @LogMessageDoc(level="WARN",
+                    message="Received ERROR from sw {switch} that "
+                            +"indicates roles are not supported "
+                            +"but we have received a valid "
+                            +"role reply earlier",
+                    explanation="The switch sent a confusing message to the" +
+                            "controller")
+        })
         protected void processOFMessage(OFMessage m)
                 throws IOException, SwitchStateException {
             boolean shouldHandleMessage = false;
             
             switch (m.getType()) {
                 case HELLO:
-                    log.debug("HELLO from {}", sw);
+                    if (log.isTraceEnabled())
+                        log.trace("HELLO from {}", sw);
+                    
                     if (state.hsState.equals(HandshakeState.START)) {
                         state.hsState = HandshakeState.HELLO;
                         sendHelloConfiguration();
@@ -829,32 +940,39 @@ public class Controller implements IFloodlightProviderService,
                 case ECHO_REPLY:
                     break;
                 case FEATURES_REPLY:
-                    log.debug("Features Reply from {}", sw);
+                    if (log.isTraceEnabled())
+                        log.trace("Features Reply from {}", sw);
+                    
+                    sw.setFeaturesReply((OFFeaturesReply) m);
                     if (state.hsState.equals(HandshakeState.HELLO)) {
-                        sw.setFeaturesReply((OFFeaturesReply) m);
                         sendFeatureReplyConfiguration();
                         state.hsState = HandshakeState.FEATURES_REPLY;
                         // uncomment to enable "dumb" switches like cbench
                         // state.hsState = HandshakeState.READY;
                         // addSwitch(sw);
                     } else {
-                        String em = "Unexpected FEATURES_REPLY from " + sw;
-                        throw new SwitchStateException(em);
+                        // return results to rest api caller
+                        sw.deliverOFFeaturesReply(m);
+                        // update database */
+                        updateActiveSwitchInfo(sw);
                     }
                     break;
                 case GET_CONFIG_REPLY:
+                    if (log.isTraceEnabled())
+                        log.trace("Get config reply from {}", sw);
+                    
                     if (!state.hsState.equals(HandshakeState.FEATURES_REPLY)) {
                         String em = "Unexpected GET_CONFIG_REPLY from " + sw;
                         throw new SwitchStateException(em);
                     }
                     OFGetConfigReply cr = (OFGetConfigReply) m;
                     if (cr.getMissSendLength() == (short)0xffff) {
-                        log.debug("Config Reply from {} confirms " + 
+                        log.trace("Config Reply from {} confirms " + 
                                   "miss length set to 0xffff", sw);
                     } else {
                         log.warn("Config Reply from {} has " +
                                  "miss length set to {}", 
-                                 sw, cr.getMissSendLength());                        
+                                 sw, cr.getMissSendLength() & 0xffff);
                     }
                     state.hasGetConfigReply = true;
                     checkSwitchReady();
@@ -875,18 +993,18 @@ public class Controller implements IFloodlightProviderService,
                     if (sw.checkFirstPendingRoleRequestXid(error.getXid())) {
                         boolean isBadVendorError =
                             (error.getErrorType() == OFError.OFErrorType.
-                                    OFPET_BAD_REQUEST.getValue()) &&
-                            (error.getErrorCode() == OFError.
-                                    OFBadRequestCode.
-                                        OFPBRC_BAD_VENDOR.ordinal());
+                                    OFPET_BAD_REQUEST.getValue());
                         // We expect to receive a bad vendor error when 
                         // we're connected to a switch that doesn't support 
                         // the Nicira vendor extensions (i.e. not OVS or 
-                        // derived from OVS). So that's not a real error 
-                        // case and we don't want to log those spurious errors.
+                        // derived from OVS).  By protocol, it should also be
+                        // BAD_VENDOR, but too many switch implementations
+                        // get it wrong and we can already check the xid()
+                        // so we can ignore the type with confidence that this
+                        // is not a spurious error
                         shouldLogError = !isBadVendorError;
                         if (isBadVendorError) {
-                            if (!state.firstRoleReplyReceived) {
+                            if (state.firstRoleReplyReceived && (role != null)) {
                                 log.warn("Received ERROR from sw {} that "
                                           +"indicates roles are not supported "
                                           +"but we have received a valid "
@@ -1038,6 +1156,12 @@ public class Controller implements IFloodlightProviderService,
                 removePortInfo(sw, portNumber);
             log.debug("Port #{} deleted for {}", portNumber, sw);
         }
+        SwitchUpdate update = new SwitchUpdate(sw, SwitchUpdateType.PORTCHANGED);
+        try {
+            this.updates.put(update);
+        } catch (InterruptedException e) {
+            log.error("Failure adding update to queue", e);
+        }
     }
     
     /**
@@ -1085,6 +1209,18 @@ public class Controller implements IFloodlightProviderService,
      * be allocated in this function
      * @throws IOException
      */
+    @LogMessageDocs({
+        @LogMessageDoc(level="ERROR",
+                message="Ignoring PacketIn (Xid = {xid}) because the data" +
+                        " field is empty.",
+                explanation="The switch sent an improperly-formatted PacketIn" +
+                        " message",
+                recommendation=LogMessageDoc.CHECK_SWITCH),
+        @LogMessageDoc(level="WARN",
+                message="Unhandled OF Message: {} from {}",
+                explanation="The switch sent a message not handled by " +
+                        "the controller")
+    })
     protected void handleMessage(IOFSwitch sw, OFMessage m,
                                  FloodlightContext bContext)
             throws IOException {
@@ -1155,7 +1291,7 @@ public class Controller implements IFloodlightProviderService,
                     }
                     pktinProcTime.recordEndTimePktIn(sw, m, bc);
                 } else {
-                    log.error("Unhandled OF Message: {} from {}", m, sw);
+                    log.warn("Unhandled OF Message: {} from {}", m, sw);
                 }
                 
                 if ((bContext == null) && (bc != null)) flcontext_free(bc);
@@ -1167,6 +1303,14 @@ public class Controller implements IFloodlightProviderService,
      * @param sw The switch that sent the error
      * @param error The error message
      */
+    @LogMessageDoc(level="ERROR",
+            message="Error {error type} {error code} from {switch}",
+            explanation="The switch responded with an unexpected error" +
+                    "to an OpenFlow message from the controller",
+            recommendation="This could indicate improper network operation. " +
+                    "If the problem persists restarting the switch and " +
+                    "controller may help."
+            )
     protected void logError(IOFSwitch sw, OFError error) {
         int etint = 0xffff & error.getErrorType();
         if (etint < 0 || etint >= OFErrorType.values().length) {
@@ -1218,6 +1362,19 @@ public class Controller implements IFloodlightProviderService,
      */
     // TODO: need to rethink locking and the synchronous switch update.
     //       We can / should also handle duplicate DPIDs in connectedSwitches
+    @LogMessageDoc(level="ERROR",
+            message="New switch added {switch} for already-added switch {switch}",
+            explanation="A switch with the same DPID as another switch " +
+                    "connected to the controller.  This can be caused by " +
+                    "multiple switches configured with the same DPID, or " +
+                    "by a switch reconnected very quickly after " +
+                    "disconnecting.",
+            recommendation="If this happens repeatedly, it is likely there " +
+                    "are switches with duplicate DPIDs on the network.  " +
+                    "Reconfigure the appropriate switches.  If it happens " +
+                    "very rarely, then it is likely this is a transient " +
+                    "network problem that can be ignored."
+            )
     protected void addSwitch(IOFSwitch sw) {
         // TODO: is it safe to modify the HashMap without holding 
         // the old switch's lock?
@@ -1266,7 +1423,7 @@ public class Controller implements IFloodlightProviderService,
         }
         
         updateActiveSwitchInfo(sw);
-        SwitchUpdate update = new SwitchUpdate(sw, true);
+        SwitchUpdate update = new SwitchUpdate(sw, SwitchUpdateType.ADDED);
         try {
             this.updates.put(update);
         } catch (InterruptedException e) {
@@ -1284,7 +1441,7 @@ public class Controller implements IFloodlightProviderService,
         // No need to acquire the listener lock, since
         // this method is only called after netty has processed all
         // pending messages
-    	log.debug("removeSwitch: {}", sw);
+        log.debug("removeSwitch: {}", sw);
         if (!this.activeSwitches.remove(sw.getId(), sw) || !sw.isConnected()) {
             log.debug("Not removing switch {}; already removed", sw);
             return;
@@ -1305,7 +1462,7 @@ public class Controller implements IFloodlightProviderService,
         // of the switch state that's written to storage.
         
         updateInactiveSwitchInfo(sw);
-        SwitchUpdate update = new SwitchUpdate(sw, false);
+        SwitchUpdate update = new SwitchUpdate(sw, SwitchUpdateType.REMOVED);
         try {
             this.updates.put(update);
         } catch (InterruptedException e) {
@@ -1392,6 +1549,17 @@ public class Controller implements IFloodlightProviderService,
     }
     
     @Override
+    @LogMessageDocs({
+        @LogMessageDoc(message="Failed to inject OFMessage {message} onto " +
+                "a null switch",
+                explanation="Failed to process a message because the switch " +
+                " is no longer connected."),
+        @LogMessageDoc(level="ERROR",
+                message="Error reinjecting OFMessage on switch {switch}",
+                explanation="An I/O error occured while attempting to " +
+                        "process an OpenFlow message",
+                recommendation=LogMessageDoc.CHECK_SWITCH)
+    })
     public boolean injectOfMessage(IOFSwitch sw, OFMessage msg,
                                    FloodlightContext bc) {
         if (sw == null) {
@@ -1422,6 +1590,8 @@ public class Controller implements IFloodlightProviderService,
     }
 
     @Override
+    @LogMessageDoc(message="Calling System.exit",
+                   explanation="The controller is terminating")
     public synchronized void terminate() {
         log.info("Calling System.exit");
         System.exit(1);
@@ -1476,6 +1646,9 @@ public class Controller implements IFloodlightProviderService,
     // **************
 
     protected void updateAllInactiveSwitchInfo() {
+        if (role == Role.SLAVE) {
+            return;
+        }
         String controllerId = getControllerId();
         String[] switchColumns = { SWITCH_DATAPATH_ID,
                                    SWITCH_CONTROLLER_ID,
@@ -1533,6 +1706,9 @@ public class Controller implements IFloodlightProviderService,
     }
     
     protected void updateActiveSwitchInfo(IOFSwitch sw) {
+        if (role == Role.SLAVE) {
+            return;
+        }
         // Obtain the row info for the switch
         Map<String, Object> switchInfo = new HashMap<String, Object>();
         String datapathIdString = sw.getStringId();
@@ -1556,14 +1732,13 @@ public class Controller implements IFloodlightProviderService,
         }
         
         // Write out the switch features info
-        OFFeaturesReply featuresReply = sw.getFeaturesReply();
-        long capabilities = U32.f(featuresReply.getCapabilities());
+        long capabilities = U32.f(sw.getCapabilities());
         switchInfo.put(SWITCH_CAPABILITIES, capabilities);
-        long buffers = U32.f(featuresReply.getBuffers());
+        long buffers = U32.f(sw.getBuffers());
         switchInfo.put(SWITCH_BUFFERS, buffers);
-        long tables = U32.f(featuresReply.getTables());
+        long tables = U32.f(sw.getTables());
         switchInfo.put(SWITCH_TABLES, tables);
-        long actions = U32.f(featuresReply.getActions());
+        long actions = U32.f(sw.getActions());
         switchInfo.put(SWITCH_ACTIONS, actions);
         switchInfo.put(SWITCH_ACTIVE, Boolean.TRUE);
         
@@ -1571,13 +1746,16 @@ public class Controller implements IFloodlightProviderService,
         storageSource.updateRowAsync(SWITCH_TABLE_NAME, switchInfo);
         
         // Update the ports
-        for (OFPhysicalPort port: sw.getPorts().values()) {
+        for (OFPhysicalPort port: sw.getPorts()) {
             updatePortInfo(sw, port);
         }
     }
     
     protected void updateInactiveSwitchInfo(IOFSwitch sw) {
-    	log.debug("Update DB with inactiveSW {}", sw);
+        if (role == Role.SLAVE) {
+            return;
+        }
+        log.debug("Update DB with inactiveSW {}", sw);
         // Update the controller info in the storage source to be inactive
         Map<String, Object> switchInfo = new HashMap<String, Object>();
         String datapathIdString = sw.getStringId();
@@ -1588,6 +1766,9 @@ public class Controller implements IFloodlightProviderService,
     }
 
     protected void updatePortInfo(IOFSwitch sw, OFPhysicalPort port) {
+        if (role == Role.SLAVE) {
+            return;
+        }
         String datapathIdString = sw.getStringId();
         Map<String, Object> portInfo = new HashMap<String, Object>();
         int portNumber = U16.f(port.getPortNumber());
@@ -1654,13 +1835,18 @@ public class Controller implements IFloodlightProviderService,
                 // ignore
             }
         }
-
-        //for (Short portNum : oldports.keySet()) {
-        //    sw.deletePort(portNum);
-        //}
-	}
+        SwitchUpdate update = new SwitchUpdate(sw, SwitchUpdateType.PORTCHANGED);
+        try {
+            this.updates.put(update);
+        } catch (InterruptedException e) {
+            log.error("Failure adding update to queue", e);
+        }
+    }
     
     protected void removePortInfo(IOFSwitch sw, short portNumber) {
+        if (role == Role.SLAVE) {
+            return;
+        }
         String datapathIdString = sw.getStringId();
         String id = datapathIdString + "|" + portNumber;
         storageSource.deleteRowAsync(PORT_TABLE_NAME, id);
@@ -1686,6 +1872,15 @@ public class Controller implements IFloodlightProviderService,
      * @return A valid role if role information is specified in the
      *         config params, otherwise null
      */
+    @LogMessageDocs({
+        @LogMessageDoc(message="Controller role set to {role}",
+                explanation="Setting the initial HA role to "),
+        @LogMessageDoc(level="ERROR",
+                message="Invalid current role value: {role}",
+                explanation="An invalid HA role value was read from the " + 
+                            "properties file",
+                recommendation=LogMessageDoc.CHECK_CONTROLLER)
+    })
     protected Role getInitialRole(Map<String, String> configParams) {
         Role role = null;
         String roleString = configParams.get("role");
@@ -1698,11 +1893,11 @@ public class Controller implements IFloodlightProviderService,
                     roleString = properties.getProperty("floodlight.role");
                 }
                 catch (IOException exc) {
-                	// Don't treat it as an error if the file specified by the
-                	// rolepath property doesn't exist. This lets us enable the
-                	// HA mechanism by just creating/setting the floodlight.role
-                	// property in that file without having to modify the
-                	// floodlight properties.
+                    // Don't treat it as an error if the file specified by the
+                    // rolepath property doesn't exist. This lets us enable the
+                    // HA mechanism by just creating/setting the floodlight.role
+                    // property in that file without having to modify the
+                    // floodlight properties.
                 }
             }
         }
@@ -1718,7 +1913,7 @@ public class Controller implements IFloodlightProviderService,
             }
         }
         
-        log.info("Controller roles set to {}", role);
+        log.info("Controller role set to {}", role);
         
         return role;
     }
@@ -1727,6 +1922,19 @@ public class Controller implements IFloodlightProviderService,
      * Tell controller that we're ready to accept switches loop
      * @throws IOException 
      */
+    @LogMessageDocs({
+        @LogMessageDoc(message="Listening for switch connections on {address}",
+                explanation="The controller is ready and listening for new" +
+                        " switch connections"),
+        @LogMessageDoc(message="Storage exception in controller " + 
+                        "updates loop; terminating process",
+                explanation=ERROR_DATABASE,
+                recommendation=LogMessageDoc.CHECK_CONTROLLER),
+        @LogMessageDoc(level="ERROR",
+                message="Exception in controller updates loop",
+                explanation="Failed to dispatch controller event",
+                recommendation=LogMessageDoc.GENERIC_ACTION)
+    })
     public void run() {
         if (log.isDebugEnabled()) {
             logListeners();
@@ -1788,17 +1996,17 @@ public class Controller implements IFloodlightProviderService,
         if (ofPort != null) {
             this.openFlowPort = Integer.parseInt(ofPort);
         }
-        log.info("OpenFlow port set to {}", this.openFlowPort);
+        log.debug("OpenFlow port set to {}", this.openFlowPort);
         String threads = configParams.get("workerthreads");
         if (threads != null) {
             this.workerThreads = Integer.parseInt(threads);
         }
-        log.info("Number of worker threads set to {}", this.workerThreads);
+        log.debug("Number of worker threads set to {}", this.workerThreads);
         String controllerId = configParams.get("controllerid");
         if (controllerId != null) {
             this.controllerId = controllerId;
         }
-        log.info("ControllerId set to {}", this.controllerId);
+        log.debug("ControllerId set to {}", this.controllerId);
     }
 
     private void initVendorMessages() {
@@ -1847,8 +2055,12 @@ public class Controller implements IFloodlightProviderService,
     /**
      * Startup all of the controller's components
      */
+    @LogMessageDoc(message="Waiting for storage source",
+                explanation="The system database is not yet ready",
+                recommendation="If this message persists, this indicates " +
+                        "that the system database has failed to start. " +
+                        LogMessageDoc.CHECK_CONTROLLER)
     public void startupComponents() {
-        log.debug("Doing controller internal setup");
         // Create the table names we use
         storageSource.createTable(CONTROLLER_TABLE_NAME, null);
         storageSource.createTable(SWITCH_TABLE_NAME, null);
@@ -1877,7 +2089,6 @@ public class Controller implements IFloodlightProviderService,
                 }
             }
         }
-        log.info("Connected to storage source");
        
         // Add our REST API
         restApi.addRestletRoutable(new CoreWebRoutable());
@@ -2012,9 +2223,17 @@ public class Controller implements IFloodlightProviderService,
         }
     }
 
-	@Override
-	public long getSystemStartTime() {
-		return (this.systemStartTime);
-	}
+    @Override
+    public long getSystemStartTime() {
+        return (this.systemStartTime);
+    }
 
+    @Override
+    public void setAlwaysClearFlowsOnSwAdd(boolean value) {
+        this.alwaysClearFlowsOnSwAdd = value;
+    }
+    
+    public boolean getAlwaysClearFlowsOnSwAdd() {
+        return this.alwaysClearFlowsOnSwAdd;
+    }
 }

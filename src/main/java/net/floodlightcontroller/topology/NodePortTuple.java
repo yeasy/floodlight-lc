@@ -1,7 +1,7 @@
 package net.floodlightcontroller.topology;
 
 import net.floodlightcontroller.core.web.serializers.DPIDSerializer;
-import net.floodlightcontroller.linkdiscovery.SwitchPortTuple;
+import net.floodlightcontroller.core.web.serializers.UShortSerializer;
 
 import org.codehaus.jackson.annotate.JsonProperty;
 import org.codehaus.jackson.map.annotate.JsonSerialize;
@@ -26,18 +26,10 @@ public class NodePortTuple {
         this.nodeId = nodeId;
         this.portId = portId;
     }
-    
-    /**
-     * Creates a NodePortTuple from the same information
-     * in a SwitchPortTuple
-     * @param swt
-     */
-    public NodePortTuple(SwitchPortTuple swt) {
-        if (swt.getSw() != null)
-            this.nodeId = swt.getSw().getId();
-        else
-            this.nodeId = 0;
-        this.portId = swt.getPort();
+
+    public NodePortTuple(long nodeId, int portId) {
+        this.nodeId = nodeId;
+        this.portId = (short) portId;
     }
 
     @JsonProperty("switch")
@@ -49,6 +41,7 @@ public class NodePortTuple {
         this.nodeId = nodeId;
     }
     @JsonProperty("port")
+    @JsonSerialize(using=UShortSerializer.class)
     public short getPortId() {
         return portId;
     }
@@ -83,5 +76,15 @@ public class NodePortTuple {
         if (portId != other.portId)
             return false;
         return true;
+    }
+    
+    /**
+     * API to return a String value formed wtih NodeID and PortID
+     * The portID is a 16-bit field, so mask it as an integer to get full
+     * positive value
+     * @return
+     */
+    public String toKeyString() {
+        return (HexString.toHexString(nodeId)+ "|" + (portId & 0xffff));
     }
 }

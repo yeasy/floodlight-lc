@@ -173,14 +173,16 @@
                 <pathelement location="${build-coverage}"/>
                 <pathelement location="${build}"/>
                 <pathelement location="${build-test}"/>
+                <pathelement location="${floodlight-jar}"/>
                 <path refid="classpath-test"/>
             </classpath>
             <formatter type="brief" usefile="true" />
             <batchtest todir="${test-output}">
                 <fileset dir="${source-test}">
                     <exclude name="**/storage/tests/StorageTest.java"/>
-                    <exclude name="**/test/Mock*"/>
+				    <include name="**/*Test*.java"/>
                     <exclude name="**/core/test/**"/>
+                    <exclude name="**/core/module/**"/>
                 </fileset>
             </batchtest>
         </junit>

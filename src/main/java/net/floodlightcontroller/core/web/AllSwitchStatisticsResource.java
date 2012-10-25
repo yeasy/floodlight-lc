@@ -123,7 +123,7 @@ public class AllSwitchStatisticsResource extends SwitchResourceBase {
             try {
                 Thread.sleep(1000);
             } catch (InterruptedException e) {
-                log.error("Failed to sleep", e);
+                log.error("Interrupted while waiting for statistics", e);
             }
         }
         
@@ -164,14 +164,10 @@ public class AllSwitchStatisticsResource extends SwitchResourceBase {
         }
         
         public void run() {
-            IFloodlightProviderService floodlightProvider = 
-                    (IFloodlightProviderService)getContext().getAttributes().
-                        get(IFloodlightProviderService.class.getCanonicalName());      
-
             if ((requestType == REQUESTTYPE.OFSTATS) && (statType != null)) {
                 switchReply = getSwitchStatistics(switchId, statType);
             } else if (requestType == REQUESTTYPE.OFFEATURES) {
-                featuresReply = floodlightProvider.getSwitches().get(switchId).getFeaturesReply();
+                featuresReply = getSwitchFeaturesReply(switchId);
             }
         }
     }

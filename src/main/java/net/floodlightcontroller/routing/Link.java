@@ -18,6 +18,7 @@
 package net.floodlightcontroller.routing;
 
 import net.floodlightcontroller.core.web.serializers.DPIDSerializer;
+import net.floodlightcontroller.core.web.serializers.UShortSerializer;
 
 import org.codehaus.jackson.annotate.JsonProperty;
 import org.codehaus.jackson.map.annotate.JsonSerialize;
@@ -29,6 +30,7 @@ public class Link {
     private long dst;
     private short dstPort;
 
+
     public Link(long srcId, short srcPort, long dstId, short dstPort) {
         this.src = srcId;
         this.srcPort = srcPort;
@@ -36,7 +38,14 @@ public class Link {
         this.dstPort = dstPort;
     }
 
-    
+    // Convenience method
+    public Link(long srcId, int srcPort, long dstId, int dstPort) {
+        this.src = srcId;
+        this.srcPort = (short) srcPort;
+        this.dst = dstId;
+        this.dstPort = (short) dstPort;
+    }
+
     @JsonProperty("src-switch")
     @JsonSerialize(using=DPIDSerializer.class)
     public long getSrc() {
@@ -44,6 +53,7 @@ public class Link {
     }
 
     @JsonProperty("src-port")
+    @JsonSerialize(using=UShortSerializer.class)
     public short getSrcPort() {
         return srcPort;
     }
@@ -54,6 +64,7 @@ public class Link {
         return dst;
     }
     @JsonProperty("dst-port")
+    @JsonSerialize(using=UShortSerializer.class)
     public short getDstPort() {
         return dstPort;
     }
@@ -94,11 +105,18 @@ public class Link {
     public String toString() {
         return "Link [src=" + HexString.toHexString(this.src) 
                 + " outPort="
-                + srcPort
+                + (srcPort & 0xffff)
                 + ", dst=" + HexString.toHexString(this.dst)
                 + ", inPort="
-                + dstPort
+                + (dstPort & 0xffff)
                 + "]";
+    }
+    
+    public String toKeyString() {
+    	return (HexString.toHexString(this.src) + "|" +
+    			(this.srcPort & 0xffff) + "|" +
+    			HexString.toHexString(this.dst) + "|" +
+    		    (this.dstPort & 0xffff) );
     }
 }
 

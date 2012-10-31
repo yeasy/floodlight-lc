@@ -32,5 +32,8 @@ regression-tests:
 count: 
 	@find src -name \*.java | xargs wc -l | sort -n
 
+run:
+	java -jar target/floodlight.jar
+
 clean:
 	ant clean

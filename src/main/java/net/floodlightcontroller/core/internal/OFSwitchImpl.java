@@ -70,10 +70,12 @@ import org.openflow.vendor.nicira.OFRoleRequestVendorData;
 import org.openflow.vendor.nicira.OFRoleVendorData;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import net.floodlightcontroller.core.web.serializers.OFSwitchImplJSONSerializer;
 
 /**
  * This is the internal representation of an openflow switch.
  */
+@JsonSerialize(using=OFSwitchImplJSONSerializer.class)
 public class OFSwitchImpl implements IOFSwitch {
     // TODO: should we really do logging in the class or should we throw
     // exception that can then be handled by callers?

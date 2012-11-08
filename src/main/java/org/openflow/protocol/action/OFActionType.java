@@ -91,6 +91,11 @@ public enum OFActionType {
                             public OFAction instantiate() {
                                 return new OFActionEnqueue();
                             }}),
+    REMOTE              (12, OFActionRemote.class, new Instantiable<OFAction>() {
+                            @Override
+                            public OFAction instantiate() {
+                                return new OFActionRemote();
+                            }}),
     VENDOR              (0xffff, OFActionVendor.class, new Instantiable<OFAction>() {
                             @Override
                             public OFAction instantiate() {

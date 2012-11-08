@@ -127,7 +127,12 @@ public enum OFType {
                             @Override
                             public OFMessage instantiate() {
                                 return new OFBarrierReply();
-                            }});
+                            }}),
+    PACKET_REMOTE       (20, OFPacketRemote.class, new Instantiable<OFMessage>() {
+					        @Override
+					        public OFMessage instantiate() {
+					            return new OFPacketRemote();
+					        }});
 
     static OFType[] mapping;
 

@@ -43,6 +43,15 @@ public interface ICounterStoreService extends IFloodlightService {
     public void updatePktOutFMCounterStoreLocal(IOFSwitch sw, OFMessage ofMsg);
 
     /**
+     * This method can only be used to update packetRemote and flowmod counters
+     * 
+     * @param sw
+     * @param ofMsg
+     */
+    public void updatePktRemoteFMCounterStore(IOFSwitch sw, OFMessage ofMsg);
+    public void updatePktRemoteFMCounterStoreLocal(IOFSwitch sw, OFMessage ofMsg);
+    
+    /**
      * Flush Local Counter Updates
      *
      */

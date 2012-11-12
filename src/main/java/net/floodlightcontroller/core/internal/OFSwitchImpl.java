@@ -227,7 +227,8 @@ public class OFSwitchImpl implements IOFSwitch {
         msg_buffer.add(m);
 
         if ((msg_buffer.size() >= Controller.BATCH_MAX_SIZE) ||
-            ((m.getType() != OFType.PACKET_OUT) && (m.getType() != OFType.FLOW_MOD))) {
+            ((m.getType() != OFType.PACKET_OUT) && (m.getType() != OFType.FLOW_MOD) 
+            		&& (m.getType() != OFType.PACKET_REMOTE))) {
             this.write(msg_buffer);
             msg_buffer.clear();
         }

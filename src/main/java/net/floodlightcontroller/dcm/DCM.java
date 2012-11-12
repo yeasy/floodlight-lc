@@ -48,6 +48,8 @@ import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
 import net.floodlightcontroller.core.types.MacVlanPair;
+import net.floodlightcontroller.core.types.PortIpPair;
+import net.floodlightcontroller.core.internal.OFSwitchImpl;
 import net.floodlightcontroller.counter.ICounterStoreService;
 import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.restserver.IRestApiService;
@@ -59,10 +61,12 @@ import org.openflow.protocol.OFMatch;
 import org.openflow.protocol.OFMessage;
 import org.openflow.protocol.OFPacketIn;
 import org.openflow.protocol.OFPacketOut;
+import org.openflow.protocol.OFPacketRemote;
 import org.openflow.protocol.OFPort;
 import org.openflow.protocol.OFType;
 import org.openflow.protocol.action.OFAction;
 import org.openflow.protocol.action.OFActionOutput;
+import org.openflow.protocol.action.OFActionRemote;
 import org.openflow.util.HexString;
 import org.openflow.util.LRULinkedHashMap;
 import org.slf4j.Logger;
@@ -79,6 +83,7 @@ public class DCM
     
     // Stores the learned state for each switch
     protected Map<IOFSwitch, Map<MacVlanPair,Short>> macVlanToSwitchPortMap;
+    protected Map<IOFSwitch, Map<MacVlanPair,PortIpPair>> macVlanToPortIpMap;
 
     // flow-mod - for use in the cookie
     public static final int DCM_APP_ID = 1;
@@ -98,6 +103,9 @@ public class DCM
 
     // normally, setup reverse flow as well. Disable only for using cbench for comparison with NOX etc.
     protected static final boolean DCM_REVERSE_FLOW = true;
+    
+    // only used for the tmp key.
+    protected IOFSwitch sw_key;
     
     /**
      * @param floodlightProvider the floodlightProvider to set
@@ -136,6 +144,31 @@ public class DCM
     }
     
     /**
+     * Adds a host to the MAC/VLAN->SwitchPort/Ip mapping
+     * @param sw The switch to add the mapping to
+     * @param mac The MAC address of the host to add
+     * @param vlan The VLAN that the host is on
+     * @param portVal The switch port that the host is on
+     * @param ip The remote sw's ip address
+     */
+    protected void addToPortIpMap(IOFSwitch sw, long mac, short vlan, short portVal, int ip) {
+        Map<MacVlanPair,PortIpPair> swMap = macVlanToPortIpMap.get(sw);
+        
+        if (vlan == (short) 0xffff) {
+            // OFMatch.loadFromPacket sets VLAN ID to 0xffff if the packet contains no VLAN tag;
+            // for our purposes that is equivalent to the default VLAN ID 0
+            vlan = 0;
+        }
+        
+        if (swMap == null) {
+            // May be accessed by REST API so we need to make it thread safe
+            swMap = Collections.synchronizedMap(new LRULinkedHashMap<MacVlanPair,PortIpPair>(MAX_MACS_PER_SWITCH));
+            macVlanToPortIpMap.put(sw, swMap);
+        }
+        swMap.put(new MacVlanPair(mac, vlan), new PortIpPair(portVal,ip));
+    }
+    
+    /**
      * Removes a host from the MAC/VLAN->SwitchPort mapping
      * @param sw The switch to remove the mapping from
      * @param mac The MAC address of the host to remove
@@ -150,6 +183,21 @@ public class DCM
             swMap.remove(new MacVlanPair(mac, vlan));
     }
 
+    /**
+     * Removes a host from the MAC/VLAN->SwitchPort/Ip mapping
+     * @param sw The switch to remove the mapping from
+     * @param mac The MAC address of the host to remove
+     * @param vlan The VLAN that the host is on
+     */
+    protected void removeFromPortIpMap(IOFSwitch sw, long mac, short vlan) {
+        if (vlan == (short) 0xffff) {
+            vlan = 0;
+        }
+        Map<MacVlanPair,PortIpPair> swMap = macVlanToPortIpMap.get(sw);
+        if (swMap != null)
+            swMap.remove(new MacVlanPair(mac, vlan));
+    }
+    
     /**
      * Get the port that a MAC/VLAN pair is associated with
      * @param sw The switch to get the mapping from
@@ -170,10 +218,36 @@ public class DCM
     }
     
     /**
+     * Get the port/ip pair that a MAC/VLAN pair is associated with
+     * @param sw The switch to get the mapping from
+     * @param mac The MAC address to get
+     * @param vlan The VLAN number to get
+     * @return The port/ip pair the remote action to
+     */
+    public PortIpPair getFromPortIpMap(IOFSwitch sw, long mac, short vlan) {
+        if (vlan == (short) 0xffff) {
+            vlan = 0;
+        }
+        Map<MacVlanPair,PortIpPair> swMap = macVlanToPortIpMap.get(sw);
+        if (swMap != null)
+            return swMap.get(new MacVlanPair(mac, vlan));
+        
+        // if none found
+        return null;
+    }
+    
+    /**
      * Clears the MAC/VLAN -> SwitchPort map for all switches
      */
     public void clearLearnedTable() {
         macVlanToSwitchPortMap.clear();
+    }
+    
+    /**
+     * Clears the MAC/VLAN -> SwitchPort/Ip map for all switches
+     */
+    public void clearRemoteTable() {
+        macVlanToPortIpMap.clear();
     }
     
     /**
@@ -186,9 +260,23 @@ public class DCM
             swMap.clear();
     }
     
+    /**
+     * Clears the MAC/VLAN -> SwitchPort/Ip map for a single switch
+     * @param sw The switch to clear the mapping for
+     */
+    public void clearRemoteTable(IOFSwitch sw) {
+        Map<MacVlanPair, PortIpPair> swMap = macVlanToPortIpMap.get(sw);
+        if (swMap != null)
+            swMap.clear();
+    }
+    
     @Override
     public synchronized Map<IOFSwitch, Map<MacVlanPair,Short>> getTable() {
         return macVlanToSwitchPortMap;
+    }
+    
+    public synchronized Map<IOFSwitch, Map<MacVlanPair,PortIpPair>> getRemoteTable() {
+        return macVlanToPortIpMap;
     }
     
     /**
@@ -313,6 +401,64 @@ public class DCM
     }
     
     /**
+     * Writes an OFPacketRemote message to a switch.
+     * @param sw The switch to write the PacketOut to.
+     * @param packetInMessage The corresponding PacketIn.
+     * @param egressPort The switchport to output the PacketRemote.
+     * @param ip The remote ip
+     */
+    private void writePacketRemoteForPacketIn(IOFSwitch sw, 
+                                          OFPacketIn packetInMessage, 
+                                          short egressPort, int ip) {
+        // from openflow 1.0 spec - need to set these on a struct ofp_packet_out:
+        // uint32_t buffer_id; /* ID assigned by datapath (-1 if none). */
+        // uint16_t in_port; /* Packet's input port (OFPP_NONE if none). */
+        // uint16_t actions_len; /* Size of action array in bytes. */
+        // struct ofp_action_header actions[0]; /* Actions. */
+        /* uint8_t data[0]; */ /* Packet data. The length is inferred
+                                  from the length field in the header.
+                                  (Only meaningful if buffer_id == -1.) */
+        
+    	OFPacketRemote packetRemoteMessage = (OFPacketRemote) floodlightProvider.getOFMessageFactory().getMessage(OFType.PACKET_REMOTE);
+        short packetRemoteLength = (short)OFPacketRemote.MINIMUM_LENGTH; // starting length
+
+        // Set buffer_id, in_port, actions_len
+        packetRemoteMessage.setBufferId(packetInMessage.getBufferId());
+        packetRemoteMessage.setInPort(packetInMessage.getInPort());
+        packetRemoteMessage.setActionsLength((short)OFActionRemote.MINIMUM_LENGTH);
+        packetRemoteLength += OFActionRemote.MINIMUM_LENGTH;
+        
+        // set actions
+        List<OFAction> actions = new ArrayList<OFAction>(1);      
+        actions.add(new OFActionRemote(egressPort, ip, (short) 0));
+        packetRemoteMessage.setActions(actions);
+
+        // set data - only if buffer_id == -1
+        if (packetInMessage.getBufferId() == OFPacketRemote.BUFFER_ID_NONE) {
+            byte[] packetData = packetInMessage.getPacketData();
+            packetRemoteMessage.setPacketData(packetData); 
+            packetRemoteLength += (short)packetData.length;
+        }
+        
+        // finally, set the total length
+        packetRemoteMessage.setLength(packetRemoteLength);              
+            
+        // and write it out
+        try {
+        	counterStore.updatePktRemoteFMCounterStore(sw, packetRemoteMessage);
+            sw.write(packetRemoteMessage, null);
+        } catch (IOException e) {
+            log.error("Failed to write {} to switch {}: {}", new Object[]{packetRemoteMessage, sw, e });
+        }
+    }
+    
+    public static int getStringIpToInt(String ip) {  
+        String[] ips = ip.split("[.]");  
+        Long num =  16777216L*Long.parseLong(ips[0]) + 65536L*Long.parseLong(ips[1]) + 256*Long.parseLong(ips[2]) + Long.parseLong(ips[3]);  
+        return num.intValue();  
+    }  
+    
+    /**
      * Processes a OFPacketIn message. If the switch has learned the MAC/VLAN to port mapping
      * for the pair it will write a FlowMod for. If the mapping has not been learned the 
      * we will flood the packet.
@@ -328,6 +474,8 @@ public class DCM
         Long sourceMac = Ethernet.toLong(match.getDataLayerSource());
         Long destMac = Ethernet.toLong(match.getDataLayerDestination());
         Short vlan = match.getDataLayerVirtualLan();
+    	log.trace(">>>Receive packetIn msg from sw {} destMac {}",new Object[]{ sw, HexString.toHexString(destMac)});
+
         if ((destMac & 0xfffffffffff0L) == 0x0180c2000000L) {
             if (log.isTraceEnabled()) {
                 log.trace("ignoring packet addressed to 802.1D/Q reserved addr: switch {} vlan {} dest MAC {}",
@@ -348,7 +496,12 @@ public class DCM
             // XXX For DCM this doesn't do much. The sourceMac is removed
             //     from port map whenever a flow expires, so you would still see
             //     a lot of floods.
-            this.writePacketOutForPacketIn(sw, pi, OFPort.OFPP_FLOOD.getValue());
+        	PortIpPair remote = getFromPortIpMap(this.sw_key,destMac,vlan);
+        	if(remote == null) {
+        		this.writePacketOutForPacketIn(sw, pi, OFPort.OFPP_FLOOD.getValue());
+        	} else { //send remote cmd to sw
+        		this.writePacketRemoteForPacketIn(sw, pi, remote.port,remote.ip);
+        	}
         } else if (outPort == match.getInputPort()) {
             log.trace("ignoring packet that arrived on same port as learned destination:"
                     + " switch {} vlan {} dest MAC {} port {}",
@@ -490,12 +643,15 @@ public class DCM
             throws FloodlightModuleException {
         macVlanToSwitchPortMap = 
                 new ConcurrentHashMap<IOFSwitch, Map<MacVlanPair,Short>>();
+        macVlanToPortIpMap = 
+                new ConcurrentHashMap<IOFSwitch, Map<MacVlanPair,PortIpPair>>();
         floodlightProvider =
                 context.getServiceImpl(IFloodlightProviderService.class);
         counterStore =
                 context.getServiceImpl(ICounterStoreService.class);
         restApi =
                 context.getServiceImpl(IRestApiService.class);
+        this.sw_key = new OFSwitchImpl();
     }
 
     @Override
@@ -504,5 +660,6 @@ public class DCM
         //floodlightProvider.addOFMessageListener(OFType.FLOW_REMOVED, this);
         //floodlightProvider.addOFMessageListener(OFType.ERROR, this);
         restApi.addRestletRoutable(new DCMWebRoutable());
+        this.addToPortIpMap(sw_key,Long.parseLong("08002785cade",16),(short)0,(short)0,getStringIpToInt("192.168.57.10"));
     }
 }

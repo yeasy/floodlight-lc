@@ -51,6 +51,16 @@ public class NullCounterStore implements IFloodlightModule,
     public void updatePktOutFMCounterStoreLocal(IOFSwitch sw, OFMessage ofMsg) {
         // no-op
     }
+    
+    @Override
+    public void updatePktRemoteFMCounterStore(IOFSwitch sw, OFMessage ofMsg) {
+        // no-op
+    }
+
+    @Override
+    public void updatePktRemoteFMCounterStoreLocal(IOFSwitch sw, OFMessage ofMsg) {
+        // no-op
+    }
 
     @Override
     public void updateFlush() {

@@ -5,6 +5,7 @@ import java.util.Map;
 import net.floodlightcontroller.core.IOFSwitch;
 import net.floodlightcontroller.core.module.IFloodlightService;
 import net.floodlightcontroller.core.types.MacVlanPair;
+import net.floodlightcontroller.core.types.PortIpPair;
 
 public interface IDCMService extends IFloodlightService {
     /**
@@ -12,4 +13,5 @@ public interface IDCMService extends IFloodlightService {
      * @return The learned host table
      */
     public Map<IOFSwitch, Map<MacVlanPair,Short>> getTable();
+    public Map<IOFSwitch, Map<MacVlanPair,PortIpPair>> getRemoteTable();
 }

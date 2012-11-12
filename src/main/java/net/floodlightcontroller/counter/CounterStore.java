@@ -83,6 +83,8 @@ public class CounterStore implements IFloodlightModule, ICounterStoreService {
         pktinCounters = new ConcurrentHashMap<String, List<ICounter>>();
     protected ConcurrentHashMap<String, List<ICounter>>
         pktoutCounters = new ConcurrentHashMap<String, List<ICounter>>();
+    protected ConcurrentHashMap<String, List<ICounter>>
+    	pktremoteCounters = new ConcurrentHashMap<String, List<ICounter>>();
 
     protected final ThreadLocal<Map<String,MutableInt>> pktin_local_buffer =
         new ThreadLocal<Map<String,MutableInt>>() {
@@ -92,6 +94,13 @@ public class CounterStore implements IFloodlightModule, ICounterStoreService {
         }
     };
     protected final ThreadLocal<Map<String,MutableInt>> pktout_local_buffer =
+        new ThreadLocal<Map<String,MutableInt>>() {
+        @Override
+        protected Map<String,MutableInt> initialValue() {
+            return new HashMap<String,MutableInt>();
+        }
+    };
+    protected final ThreadLocal<Map<String,MutableInt>> pktremote_local_buffer =
         new ThreadLocal<Map<String,MutableInt>>() {
         @Override
         protected Map<String,MutableInt> initialValue() {
@@ -167,6 +176,38 @@ public class CounterStore implements IFloodlightModule, ICounterStoreService {
             this.getPktOutFMCounters(sw, m); // create counters as side effect (if required)
             currval = new MutableInt();
             pktout_buffer.put(countersKey, currval);
+        }
+        currval.increment();
+        return;
+    }
+    
+    /**
+     * This method can only be used to update packetRemote and flowmod counters
+     *  NOTE: flowmod is counted per switch and for controller, not per port/proto
+     *
+     * @param sw
+     * @param m
+     */
+    public void updatePktRemoteFMCounterStore(IOFSwitch sw, OFMessage m) {
+        List<ICounter> counters = this.getPktRemoteFMCounters(sw, m);
+        if (counters != null) {
+            for (ICounter c : counters) {
+                c.increment();
+            }
+        }
+        return;
+    }
+
+    @Override
+    public void updatePktRemoteFMCounterStoreLocal(IOFSwitch sw, OFMessage m) {
+        String countersKey = this.getCountersKey(sw, m, null);
+        Map<String, MutableInt> pktremote_buffer = this.pktremote_local_buffer.get();
+        MutableInt currval = pktremote_buffer.get(countersKey);
+
+        if ( currval == null ) {
+            this.getPktRemoteFMCounters(sw, m); // create counters as side effect (if required)
+            currval = new MutableInt();
+            pktremote_buffer.put(countersKey, currval);
         }
         currval.increment();
         return;
@@ -469,6 +510,47 @@ public class CounterStore implements IFloodlightModule, ICounterStoreService {
         /* Add to map and return */
         this.pktoutCounters.putIfAbsent(countersKey, counters);
         return this.pktoutCounters.get(countersKey);
+
+    }
+    
+    protected List<ICounter> getPktRemoteFMCounters(IOFSwitch sw, OFMessage m) {
+        /* If possible, find and return counters for this tuple */
+        String countersKey = this.getCountersKey(sw, m, null);
+        List<ICounter> counters =
+            this.pktremoteCounters.get(countersKey);
+        if (counters != null) {
+            return counters;
+        }
+
+        /*
+         *  Create the required counters
+         */
+        counters = new ArrayList<ICounter>();
+
+        /* String values for names */
+        String switchIdHex = sw.getStringId();
+        String packetName = m.getType().toClass().getName();
+        packetName = packetName.substring(packetName.lastIndexOf('.')+1);
+
+        String controllerFMCounterName =
+            CounterStore.createCounterName(
+                CONTROLLER_NAME,
+                -1,
+                packetName);
+        counters.add(createCounter(controllerFMCounterName,
+                                   CounterValue.CounterType.LONG));
+
+        String switchFMCounterName =
+            CounterStore.createCounterName(
+                switchIdHex,
+                -1,
+                packetName);
+        counters.add(createCounter(switchFMCounterName,
+                                   CounterValue.CounterType.LONG));
+
+        /* Add to map and return */
+        this.pktremoteCounters.putIfAbsent(countersKey, counters);
+        return this.pktremoteCounters.get(countersKey);
 
     }
 

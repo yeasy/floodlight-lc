@@ -72,6 +72,8 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
         Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, 
                                    IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
         
+        log.debug("Receive PacketIn={}",pi);
+        
         // If a decision has been made we obey it
         // otherwise we just forward
         if (decision != null) {

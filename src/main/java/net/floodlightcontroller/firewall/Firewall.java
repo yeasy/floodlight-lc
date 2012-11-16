@@ -573,6 +573,8 @@ public class Firewall implements IFirewallService, IOFMessageListener,
         Ethernet eth = IFloodlightProviderService.bcStore.get(cntx,
                 IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
 
+        logger.debug("Receive PacketIn={}",pi);
+
         // Allowing L2 broadcast + ARP broadcast request (also deny malformed
         // broadcasts -> L2 broadcast + L3 unicast)
         if (eth.isBroadcast() == true) {

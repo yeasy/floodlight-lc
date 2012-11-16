@@ -926,6 +926,8 @@ IFloodlightModule, IInfoProvider, IHAListener {
 
     protected Command handlePacketIn(long sw, OFPacketIn pi,
                                      FloodlightContext cntx) {
+        log.debug("Receive PacketIn={}",pi);
+
         Ethernet eth = 
                 IFloodlightProviderService.bcStore.get(cntx, 
                                                        IFloodlightProviderService.CONTEXT_PI_PAYLOAD);

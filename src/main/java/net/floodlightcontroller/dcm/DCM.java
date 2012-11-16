@@ -474,7 +474,7 @@ public class DCM
         Long sourceMac = Ethernet.toLong(match.getDataLayerSource());
         Long destMac = Ethernet.toLong(match.getDataLayerDestination());
         Short vlan = match.getDataLayerVirtualLan();
-    	log.trace(">>>Receive packetIn msg from sw {} destMac {}",new Object[]{ sw, HexString.toHexString(destMac)});
+    	log.debug(">>>Receive packetIn msg from sw {} destMac {}",new Object[]{ sw, HexString.toHexString(destMac)});
 
         if ((destMac & 0xfffffffffff0L) == 0x0180c2000000L) {
             if (log.isTraceEnabled()) {
@@ -497,7 +497,8 @@ public class DCM
             //     from port map whenever a flow expires, so you would still see
             //     a lot of floods.
         	PortIpPair remote = getFromPortIpMap(this.sw_key,destMac,vlan);
-        	if(remote == null) {
+        	if(remote == null) {//not in bf_gdt, will flooding
+        		log.debug("Not in mac table and bf_gdt, will flooding.\n");
         		this.writePacketOutForPacketIn(sw, pi, OFPort.OFPP_FLOOD.getValue());
         	} else { //send remote cmd to sw
         		this.writePacketRemoteForPacketIn(sw, pi, remote.port,remote.ip);

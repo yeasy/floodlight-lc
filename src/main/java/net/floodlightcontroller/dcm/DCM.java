@@ -474,7 +474,7 @@ public class DCM
         Long sourceMac = Ethernet.toLong(match.getDataLayerSource());
         Long destMac = Ethernet.toLong(match.getDataLayerDestination());
         Short vlan = match.getDataLayerVirtualLan();
-    	log.debug(">>>Receive packetIn msg from sw {} destMac {}",new Object[]{ sw, HexString.toHexString(destMac)});
+    	log.debug(">>>Receive packetIn msg from sw {}:Mac {} -> {}",new Object[]{ sw, HexString.toHexString(sourceMac),HexString.toHexString(destMac)});
 
         if ((destMac & 0xfffffffffff0L) == 0x0180c2000000L) {
             if (log.isTraceEnabled()) {
@@ -501,6 +501,7 @@ public class DCM
         		log.debug("Not in mac table and bf_gdt, will flooding.\n");
         		this.writePacketOutForPacketIn(sw, pi, OFPort.OFPP_FLOOD.getValue());
         	} else { //send remote cmd to sw
+        		log.debug("Found in bf_gdt, will send remote {}.\n",remote);
         		this.writePacketRemoteForPacketIn(sw, pi, remote.port,remote.ip);
         	}
         } else if (outPort == match.getInputPort()) {
@@ -521,6 +522,7 @@ public class DCM
                     & ~OFMatch.OFPFW_IN_PORT
                     & ~OFMatch.OFPFW_DL_VLAN & ~OFMatch.OFPFW_DL_SRC & ~OFMatch.OFPFW_DL_DST
                     & ~OFMatch.OFPFW_NW_SRC_MASK & ~OFMatch.OFPFW_NW_DST_MASK);
+    		log.debug("In mac table, will add flow {}, output={}.\n",match,outPort);
             this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, pi.getBufferId(), match, outPort);
             if (DCM_REVERSE_FLOW) {
                 this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, -1, match.clone()
@@ -661,6 +663,9 @@ public class DCM
         //floodlightProvider.addOFMessageListener(OFType.FLOW_REMOVED, this);
         //floodlightProvider.addOFMessageListener(OFType.ERROR, this);
         restApi.addRestletRoutable(new DCMWebRoutable());
-        this.addToPortIpMap(sw_key,Long.parseLong("08002785cade",16),(short)0,(short)0,getStringIpToInt("192.168.57.10"));
+        this.addToPortMap(sw_key,Long.parseLong("080027ec8570",16),(short)0,(short)1);
+        this.addToPortMap(sw_key,Long.parseLong("080027af6a8f",16),(short)0,(short)1);
+        //this.addToPortIpMap(sw_key,Long.parseLong("080027ec8570",16),(short)0,(short)1,getStringIpToInt("192.168.57.10"));
+        //this.addToPortIpMap(sw_key,Long.parseLong("080027af6a8f",16),(short)0,(short)1,getStringIpToInt("192.168.58.10"));
     }
 }

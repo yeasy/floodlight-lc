@@ -72,13 +72,13 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
         Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, 
                                    IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
         
-        log.debug("Receive PacketIn={}",pi);
+        log.debug("Receive PacketIn={}, Mac={}",pi,eth);
         
         // If a decision has been made we obey it
         // otherwise we just forward
         if (decision != null) {
             if (log.isTraceEnabled()) {
-                log.trace("Forwaring decision={} was made for PacketIn={}",
+                log.debug("Forwaring decision={} was made for PacketIn={}",
                         decision.getRoutingAction().toString(),
                         pi);
             }
@@ -104,15 +104,20 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
                     return Command.CONTINUE;
             }
         } else {
+        	 log.debug("No decision was made for PacketIn={}",
+                     pi);
             if (log.isTraceEnabled()) {
-                log.trace("No decision was made for PacketIn={}, forwarding",
+                log.trace("No decision was made for PacketIn={}",
                         pi);
             }
             
             if (eth.isBroadcast() || eth.isMulticast()) {
                 // For now we treat multicast as broadcast
+                log.debug("Broadcast pkt, doFlood(), PacketIn={}",pi);
+
                 doFlood(sw, pi, cntx);
             } else {
+            	log.debug("NOT Broadcast pkt, doForwardFlow(), PacketIn={}",pi);
                 doForwardFlow(sw, pi, cntx, false);
             }
         }

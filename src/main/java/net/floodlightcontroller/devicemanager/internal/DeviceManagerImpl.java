@@ -744,7 +744,7 @@ IFlowReconcileListener, IInfoProvider, IHAListener {
 
     protected Command processPacketInMessage(IOFSwitch sw, OFPacketIn pi,
                                              FloodlightContext cntx) {
-        logger.debug("Receive PacketIn={}",pi);
+        //logger.debug("Receive PacketIn={}",pi);
 
         Ethernet eth =
                 IFloodlightProviderService.bcStore.

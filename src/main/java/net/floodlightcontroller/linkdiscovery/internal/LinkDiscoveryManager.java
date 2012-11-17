@@ -369,7 +369,7 @@ IFloodlightModule, IInfoProvider, IHAListener {
         lldpClock = (lldpClock + 1)% LLDP_TO_ALL_INTERVAL;
 
         if (lldpClock == 0) {
-            log.debug("Sending LLDP out on all ports.");
+            //log.debug("Sending LLDP out on all ports.");
             discoverOnAllPorts();
         }
     }
@@ -926,7 +926,7 @@ IFloodlightModule, IInfoProvider, IHAListener {
 
     protected Command handlePacketIn(long sw, OFPacketIn pi,
                                      FloodlightContext cntx) {
-        log.debug("Receive PacketIn={}",pi);
+        //log.debug("Receive PacketIn={}",pi);
 
         Ethernet eth = 
                 IFloodlightProviderService.bcStore.get(cntx, 

@@ -51,7 +51,6 @@ import org.codehaus.jackson.map.annotate.JsonSerialize;
 import org.codehaus.jackson.map.ser.ToStringSerializer;
 import org.jboss.netty.channel.Channel;
 import org.openflow.protocol.OFFeaturesReply;
-import org.openflow.protocol.OFFeaturesRequest;
 import org.openflow.protocol.OFFlowMod;
 import org.openflow.protocol.OFMatch;
 import org.openflow.protocol.OFMessage;
@@ -105,7 +104,7 @@ public class OFSwitchImpl implements IOFSwitch {
     protected Map<Integer,OFStatisticsFuture> statsFutureMap;
     protected Map<Integer, IOFMessageListener> iofMsgListenersMap;
     protected Map<Integer,OFFeaturesReplyFuture> featuresFutureMap;
-    protected boolean connected;
+    protected volatile boolean connected;
     protected Role role;
     protected TimedCache<Long> timedCache;
     protected ReentrantReadWriteLock listenerLock;
@@ -130,12 +129,12 @@ public class OFSwitchImpl implements IOFSwitch {
     protected long datapathId;
 
     public static IOFSwitchFeatures switchFeatures;
-    protected static final ThreadLocal<Map<OFSwitchImpl,List<OFMessage>>> local_msg_buffer =
-            new ThreadLocal<Map<OFSwitchImpl,List<OFMessage>>>() {
-            @Override
-            protected Map<OFSwitchImpl,List<OFMessage>> initialValue() {
-                return new HashMap<OFSwitchImpl,List<OFMessage>>();
-            }
+    protected static final ThreadLocal<Map<IOFSwitch,List<OFMessage>>> local_msg_buffer =
+            new ThreadLocal<Map<IOFSwitch,List<OFMessage>>>() {
+        @Override
+        protected Map<IOFSwitch,List<OFMessage>> initialValue() {
+            return new HashMap<IOFSwitch,List<OFMessage>>();
+        }
     };
     
     // for managing our map sizes
@@ -215,7 +214,7 @@ public class OFSwitchImpl implements IOFSwitch {
     
     @Override
     public void write(OFMessage m, FloodlightContext bc) throws IOException {
-        Map<OFSwitchImpl,List<OFMessage>> msg_buffer_map = local_msg_buffer.get();
+        Map<IOFSwitch,List<OFMessage>> msg_buffer_map = local_msg_buffer.get();
         List<OFMessage> msg_buffer = msg_buffer_map.get(this);
         if (msg_buffer == null) {
             msg_buffer = new ArrayList<OFMessage>();
@@ -493,13 +492,15 @@ public class OFSwitchImpl implements IOFSwitch {
 
     @JsonIgnore
     @Override
-    public synchronized boolean isConnected() {
+    public boolean isConnected() {
+        // No lock needed since we use volatile
         return connected;
     }
 
     @Override
     @JsonIgnore
-    public synchronized void setConnected(boolean connected) {
+    public void setConnected(boolean connected) {
+        // No lock needed since we use volatile
         this.connected = connected;
     }
     
@@ -568,7 +569,7 @@ public class OFSwitchImpl implements IOFSwitch {
 
     @Override
     public void flush() {
-        Map<OFSwitchImpl,List<OFMessage>> msg_buffer_map = local_msg_buffer.get();
+        Map<IOFSwitch,List<OFMessage>> msg_buffer_map = local_msg_buffer.get();
         List<OFMessage> msglist = msg_buffer_map.get(this);
         if ((msglist != null) && (msglist.size() > 0)) {
             try {
@@ -582,8 +583,8 @@ public class OFSwitchImpl implements IOFSwitch {
     }
 
     public static void flush_all() {
-        Map<OFSwitchImpl,List<OFMessage>> msg_buffer_map = local_msg_buffer.get();
-        for (OFSwitchImpl sw : msg_buffer_map.keySet()) {
+        Map<IOFSwitch,List<OFMessage>> msg_buffer_map = local_msg_buffer.get();
+        for (IOFSwitch sw : msg_buffer_map.keySet()) {
             sw.flush();
         }
     }
@@ -633,7 +634,7 @@ public class OFSwitchImpl implements IOFSwitch {
      *        RoleChanger can check for timeouts.
      * @return transaction id of the role request message that was sent
      */
-    protected int sendNxRoleRequest(Role role, long cookie)
+    public int sendNxRoleRequest(Role role, long cookie)
             throws IOException {
         synchronized(pendingRoleRequests) {
             // Convert the role enum to the appropriate integer constant used
@@ -712,7 +713,7 @@ public class OFSwitchImpl implements IOFSwitch {
                 explanation="The switch sent an unexpected HA role reply",
                 recommendation=HA_CHECK_SWITCH)                           
     })
-    protected void deliverRoleReply(int xid, Role role) {
+    public void deliverRoleReply(int xid, Role role) {
         synchronized(pendingRoleRequests) {
             PendingRoleRequestEntry head = pendingRoleRequests.poll();
             if (head == null) {
@@ -754,7 +755,7 @@ public class OFSwitchImpl implements IOFSwitch {
      * @param xid
      * @return 
      */
-    protected boolean checkFirstPendingRoleRequestXid (int xid) {
+    public boolean checkFirstPendingRoleRequestXid (int xid) {
         synchronized(pendingRoleRequests) {
             PendingRoleRequestEntry head = pendingRoleRequests.peek();
             if (head == null)
@@ -770,7 +771,7 @@ public class OFSwitchImpl implements IOFSwitch {
      * @param cookie
      * @return
      */
-    protected boolean checkFirstPendingRoleRequestCookie(long cookie) {
+    public boolean checkFirstPendingRoleRequestCookie(long cookie) {
         synchronized(pendingRoleRequests) {
             PendingRoleRequestEntry head = pendingRoleRequests.peek();
             if (head == null)
@@ -787,7 +788,7 @@ public class OFSwitchImpl implements IOFSwitch {
      * Otherwise we ignore it.
      * @param xid
      */
-    protected void deliverRoleRequestNotSupported(int xid) {
+    public void deliverRoleRequestNotSupported(int xid) {
         synchronized(pendingRoleRequests) {
             PendingRoleRequestEntry head = pendingRoleRequests.poll();
             this.role = null;
@@ -801,9 +802,11 @@ public class OFSwitchImpl implements IOFSwitch {
     }
 
     @Override
-    public Future<OFFeaturesReply> getFeaturesReplyFromSwitch()
+    public Future<OFFeaturesReply> querySwitchFeaturesReply()
             throws IOException {
-        OFMessage request = new OFFeaturesRequest();
+        OFMessage request = 
+                floodlightProvider.getOFMessageFactory().
+                    getMessage(OFType.FEATURES_REQUEST);
         request.setXid(getNextTransactionId());
         OFFeaturesReplyFuture future =
                 new OFFeaturesReplyFuture(threadPool, this, request.getXid());
@@ -853,5 +856,11 @@ public class OFSwitchImpl implements IOFSwitch {
     @Override
     public byte getTables() {
         return tables;
+    }
+
+
+    @Override
+    public void setFloodlightProvider(Controller controller) {
+        floodlightProvider = controller;
     }
 }

@@ -24,6 +24,7 @@ import java.net.NetworkInterface;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -126,6 +127,10 @@ IFloodlightModule, IInfoProvider, IHAListener {
     protected static Logger log = LoggerFactory.getLogger(LinkDiscoveryManager.class);
 
     // Names of table/fields for links in the storage API
+    private static final String TOPOLOGY_TABLE_NAME = "controller_topologyconfig";
+    private static final String TOPOLOGY_ID = "id";
+    private static final String TOPOLOGY_AUTOPORTFAST = "autoportfast";
+
     private static final String LINK_TABLE_NAME = "controller_link";
     private static final String LINK_ID = "id";
     private static final String LINK_SRC_SWITCH = "src_switch_id";
@@ -193,7 +198,8 @@ IFloodlightModule, IInfoProvider, IHAListener {
      * Flag to indicate if automatic port fast is enabled or not.
      * Default is set to false -- Initialized in the init method as well.
      */
-    boolean autoPortFastFeature = false;
+    public final boolean AUTOPORTFAST_DEFAULT= false;
+    boolean autoPortFastFeature = AUTOPORTFAST_DEFAULT;
 
     /**
      * Map from link to the most recent time it was verified functioning
@@ -302,6 +308,10 @@ IFloodlightModule, IInfoProvider, IHAListener {
         return false;
     }
 
+    public boolean isTunnelPort(long sw, short port) {
+        return false;
+    }
+
     public ILinkDiscovery.LinkType getLinkType(Link lt, LinkInfo info) {
         if (info.getUnicastValidTime() != null) {
             return ILinkDiscovery.LinkType.DIRECT_LINK;
@@ -319,6 +329,13 @@ IFloodlightModule, IInfoProvider, IHAListener {
     private void doUpdatesThread() throws InterruptedException {
         do {
             LDUpdate update = updates.take();
+            List<LDUpdate> updateList = new ArrayList<LDUpdate>();
+            updateList.add(update);
+
+            // Add all the pending updates to the list.
+            while (updates.peek() != null) {
+                updateList.add(updates.remove());
+            }
 
             if (linkDiscoveryAware != null) {
                 if (log.isTraceEnabled()) {
@@ -330,7 +347,7 @@ IFloodlightModule, IInfoProvider, IHAListener {
                 }
                 try {
                     for (ILinkDiscoveryListener lda : linkDiscoveryAware) { // order maintained
-                        lda.linkDiscoveryUpdate(update);
+                        lda.linkDiscoveryUpdate(updateList);
                     }
                 }
                 catch (Exception e) {
@@ -537,7 +554,7 @@ IFloodlightModule, IInfoProvider, IHAListener {
 
         if (ofpPort == null) {
             if (log.isTraceEnabled()) {
-                log.trace("Null physical port. sw={}, port={}", sw, port);
+                log.trace("Null physical port. sw={}, port={}", HexString.toHexString(sw), port);
             }
             return;
         }
@@ -555,7 +572,7 @@ IFloodlightModule, IInfoProvider, IHAListener {
 
         if (log.isTraceEnabled()) {
             log.trace("Sending LLDP packet out of swich: {}, port: {}",
-                      sw, port);
+            		HexString.toHexString(sw), port);
         }
 
         // using "nearest customer bridge" MAC address for broadest possible propagation
@@ -574,13 +591,23 @@ IFloodlightModule, IInfoProvider, IHAListener {
 
         Long dpid = sw;
         dpidBB.putLong(dpid);
-        // set the ethernet source mac to last 6 bytes of dpid
-        System.arraycopy(dpidArray, 2, ofpPort.getHardwareAddress(), 0, 6);
         // set the chassis id's value to last 6 bytes of dpid
         System.arraycopy(dpidArray, 2, chassisId, 1, 6);
         // set the optional tlv to the full dpid
         System.arraycopy(dpidArray, 0, dpidTLVValue, 4, 8);
 
+        // TODO: Consider remove this block of code.
+        // It's evil to overwrite port object. The the old code always
+        // overwrote mac address, we now only overwrite zero macs and
+        // log a warning, mostly for paranoia.
+        byte[] srcMac = ofpPort.getHardwareAddress();
+        byte[] zeroMac = {0, 0, 0, 0, 0, 0};
+        if (Arrays.equals(srcMac, zeroMac)) {
+            log.warn("Port {}/{} has zero hareware address" +
+                     "overwrite with lower 6 bytes of dpid",
+                     HexString.toHexString(dpid), ofpPort.getPortNumber());
+            System.arraycopy(dpidArray, 2, srcMac, 0, 6); 
+        }
 
         // set the portId to the outgoing port
         portBB.putShort(port);
@@ -809,7 +836,7 @@ IFloodlightModule, IInfoProvider, IHAListener {
 
         if (!remoteSwitch.portEnabled(remotePort)) {
             if (log.isTraceEnabled()) {
-                log.trace("Ignoring link with disabled source port: switch {} port {}", remoteSwitch, remotePort);
+                log.trace("Ignoring link with disabled source port: switch {} port {}", remoteSwitch.getStringId(), remotePort);
             }
             return Command.STOP;
         }
@@ -817,13 +844,13 @@ IFloodlightModule, IInfoProvider, IHAListener {
                                                      remotePort))) {
             if (log.isTraceEnabled()) {
                 log.trace("Ignoring link with suppressed src port: switch {} port {}",
-                      remoteSwitch, remotePort);
+                		remoteSwitch.getStringId(), remotePort);
             }
             return Command.STOP;
         }
         if (!iofSwitch.portEnabled(pi.getInPort())) {
             if (log.isTraceEnabled()) {
-                log.trace("Ignoring link with disabled dest port: switch {} port {}", sw, pi.getInPort());
+                log.trace("Ignoring link with disabled dest port: switch {} port {}", HexString.toHexString(sw), pi.getInPort());
             }
             return Command.STOP;
         }
@@ -1098,14 +1125,24 @@ IFloodlightModule, IInfoProvider, IHAListener {
     public Map<Long, Set<Link>> getSwitchLinks() {
         return this.switchLinks;
     }
-
+    
     /**
      * Removes links from memory and storage.
      * @param links The List of @LinkTuple to delete.
      */
     protected void deleteLinks(List<Link> links, String reason) {
-        NodePortTuple srcNpt, dstNpt;
+        deleteLinks(links, reason, null);
+    }
 
+    /**
+     * Removes links from memory and storage.
+     * @param links The List of @LinkTuple to delete.
+     */
+    protected void deleteLinks(List<Link> links, String reason,
+                               List<LDUpdate> updateList) {
+
+        NodePortTuple srcNpt, dstNpt;
+        List<LDUpdate> linkUpdateList = new ArrayList<LDUpdate>();
         lock.writeLock().lock();
         try {
             for (Link lt : links) {
@@ -1133,7 +1170,7 @@ IFloodlightModule, IInfoProvider, IHAListener {
                 }
 
                 LinkInfo info = this.links.remove(lt);
-                updates.add(new LDUpdate(lt.getSrc(), lt.getSrcPort(),
+                linkUpdateList.add(new LDUpdate(lt.getSrc(), lt.getSrcPort(),
                                          lt.getDst(), lt.getDstPort(),
                                          getLinkType(lt, info),
                                          UpdateOperation.LINK_REMOVED));
@@ -1158,6 +1195,9 @@ IFloodlightModule, IInfoProvider, IHAListener {
                 }
             }
         } finally {
+            if (updateList != null)
+                linkUpdateList.addAll(updateList);
+            updates.addAll(linkUpdateList);
             lock.writeLock().unlock();
         }
     }
@@ -1311,7 +1351,7 @@ IFloodlightModule, IInfoProvider, IHAListener {
     @Override
     public void addedSwitch(IOFSwitch sw) {
 
-        if (sw.getEnabledPorts() != null) {
+        if (sw.getEnabledPortNumbers() != null) {
             for (Short p : sw.getEnabledPortNumbers()) {
                 processNewPort(sw.getId(), p);
             }
@@ -1340,13 +1380,22 @@ IFloodlightModule, IInfoProvider, IHAListener {
                     log.trace("Handle switchRemoved. Switch {}; removing links {}",
                               HexString.toHexString(sw), switchLinks.get(sw));
                 }
+
+                List<LDUpdate> updateList = new ArrayList<LDUpdate>();
+                updateList.add(new LDUpdate(sw, null,
+                                            UpdateOperation.SWITCH_REMOVED));
                 // add all tuples with an endpoint on this switch to erase list
                 eraseList.addAll(switchLinks.get(sw));
-                deleteLinks(eraseList, "Switch Removed");
 
-                // Send a switch removed update
-                LDUpdate update = new LDUpdate(sw, null, UpdateOperation.SWITCH_REMOVED);
-                updates.add(update);
+                // Sending the updateList, will ensure the updates in this
+                // list will be added at the end of all the link updates.
+                // Thus, it is not necessary to explicitly add these updates
+                // to the queue.
+                deleteLinks(eraseList, "Switch Removed", updateList);
+            } else {
+                // Switch does not have any links.
+                updates.add(new LDUpdate(sw, null,
+                                            UpdateOperation.SWITCH_REMOVED));
             }
         } finally {
             lock.writeLock().unlock();
@@ -1679,6 +1728,12 @@ IFloodlightModule, IInfoProvider, IHAListener {
 
     @Override
     public void rowsModified(String tableName, Set<Object> rowKeys) {
+
+        if (tableName.equals(TOPOLOGY_TABLE_NAME)) {
+            readTopologyConfigFromStorage();
+            return;
+        }
+
         Map<Long, IOFSwitch> switches = floodlightProvider.getSwitches();
         ArrayList<IOFSwitch> updated_switches = new ArrayList<IOFSwitch>();
         for(Object key: rowKeys) {
@@ -1738,7 +1793,9 @@ IFloodlightModule, IInfoProvider, IHAListener {
 
     @Override
     public void rowsDeleted(String tableName, Set<Object> rowKeys) {
-        // Ignore delete events, the switch delete will do the right thing on it's own
+        // Ignore delete events, the switch delete will do the 
+        // right thing on it's own.
+        readTopologyConfigFromStorage();
     }
 
     // IFloodlightModule classes
@@ -1838,12 +1895,17 @@ IFloodlightModule, IInfoProvider, IHAListener {
             return;
         }
 
+        storageSource.createTable(TOPOLOGY_TABLE_NAME, null);
+        storageSource.setTablePrimaryKeyName(TOPOLOGY_TABLE_NAME, TOPOLOGY_ID);
+        readTopologyConfigFromStorage();
+
         storageSource.createTable(LINK_TABLE_NAME, null);
         storageSource.setTablePrimaryKeyName(LINK_TABLE_NAME, LINK_ID);
         storageSource.deleteMatchingRows(LINK_TABLE_NAME, null);
         // Register for storage updates for the switch table
         try {
             storageSource.addListener(SWITCH_CONFIG_TABLE_NAME, this);
+            storageSource.addListener(TOPOLOGY_TABLE_NAME, this);
         } catch (StorageException ex) {
             log.error("Error in installing listener for " +
             		  "switch table {}", SWITCH_CONFIG_TABLE_NAME);
@@ -2024,6 +2086,7 @@ IFloodlightModule, IInfoProvider, IHAListener {
                                 "to HA change from SLAVE->MASTER");
                     }
                     clearAllLinks();
+                    readTopologyConfigFromStorage();
                     log.debug("Role Change to Master: Rescheduling discovery task.");
                     discoveryTask.reschedule(1, TimeUnit.MICROSECONDS);
                 }
@@ -2058,5 +2121,22 @@ IFloodlightModule, IInfoProvider, IHAListener {
 
     public void setAutoPortFastFeature(boolean autoPortFastFeature) {
         this.autoPortFastFeature = autoPortFastFeature;
+    }
+
+    public void readTopologyConfigFromStorage() {
+        IResultSet topologyResult = storageSource.executeQuery(TOPOLOGY_TABLE_NAME,
+                                                               null, null, null);
+
+        if (topologyResult.next()) {
+            boolean apf = topologyResult.getBoolean(TOPOLOGY_AUTOPORTFAST);
+            autoPortFastFeature = apf;
+        } else {
+            this.autoPortFastFeature = AUTOPORTFAST_DEFAULT;
+        }
+
+        if (autoPortFastFeature)
+            log.info("Setting autoportfast feature to ON");
+        else
+            log.info("Setting autoportfast feature to OFF");
     }
 }

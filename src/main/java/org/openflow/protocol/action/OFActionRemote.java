@@ -29,7 +29,7 @@ import org.openflow.util.U16;
  * @author Rob Sherwood (rob.sherwood@stanford.edu)
  */
 public class OFActionRemote extends OFAction implements Cloneable {
-    public static int MINIMUM_LENGTH = 8+8;
+    public static int MINIMUM_LENGTH = 8+4;
 
     protected short port;//output port
     protected int	  ip;  //remote ip

@@ -281,7 +281,7 @@ public class DCM
     
     /**
      * Writes a OFFlowMod to a switch.
-     * @param sw The switch tow rite the flowmod to.
+     * @param sw The switch to write the flowmod to.
      * @param command The FlowMod actions (add, delete, etc).
      * @param bufferId The buffer ID if the switch has buffered the packet.
      * @param match The OFMatch structure to write.
@@ -490,6 +490,7 @@ public class DCM
         
         // Now output flow-mod and/or packet
         Short outPort = getFromPortMap(sw, destMac, vlan);
+        outPort = null;
         if (outPort == null) {
             // If we haven't learned the port for the dest MAC/VLAN, flood it
             // Don't flood broadcast packets if the broadcast is disabled.
@@ -501,14 +502,17 @@ public class DCM
         		log.debug("Not in mac table and bf_gdt, will flooding.\n");
         		this.writePacketOutForPacketIn(sw, pi, OFPort.OFPP_FLOOD.getValue());
         	} else { //send remote cmd to sw
-        		log.debug("Found in bf_gdt, will send remote {}.\n",remote);
+        		log.debug("Found in bf_gdt, will send remote port={}, ip=0x{}.\n",remote.port, Integer.toHexString(remote.ip));
         		this.writePacketRemoteForPacketIn(sw, pi, remote.port,remote.ip);
+        		outPort = remote.port;
         	}
-        } else if (outPort == match.getInputPort()) {
+        }
+        if(outPort != null) {
+        if (outPort == match.getInputPort()) {
             log.trace("ignoring packet that arrived on same port as learned destination:"
                     + " switch {} vlan {} dest MAC {} port {}",
                     new Object[]{ sw, vlan, HexString.toHexString(destMac), outPort });
-        } else {
+        } else  {
             // Add flow table entry matching source MAC, dest MAC, VLAN and input port
             // that sends to the port we previously learned for the dest MAC/VLAN.  Also
             // add a flow table entry with source and destination MACs reversed, and
@@ -522,7 +526,7 @@ public class DCM
                     & ~OFMatch.OFPFW_IN_PORT
                     & ~OFMatch.OFPFW_DL_VLAN & ~OFMatch.OFPFW_DL_SRC & ~OFMatch.OFPFW_DL_DST
                     & ~OFMatch.OFPFW_NW_SRC_MASK & ~OFMatch.OFPFW_NW_DST_MASK);
-    		log.debug("In mac table, will add flow {}, output={}.\n",match,outPort);
+    		log.debug("Has outPort, will add flow {}, output={}, and the reversed one.\n",match,outPort);
             this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, pi.getBufferId(), match, outPort);
             if (DCM_REVERSE_FLOW) {
                 this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, -1, match.clone()
@@ -535,6 +539,7 @@ public class DCM
                     .setInputPort(outPort),
                     match.getInputPort());
             }
+        }
         }
         return Command.CONTINUE;
     }
@@ -663,9 +668,9 @@ public class DCM
         //floodlightProvider.addOFMessageListener(OFType.FLOW_REMOVED, this);
         //floodlightProvider.addOFMessageListener(OFType.ERROR, this);
         restApi.addRestletRoutable(new DCMWebRoutable());
-        this.addToPortMap(sw_key,Long.parseLong("080027ec8570",16),(short)0,(short)1);
-        this.addToPortMap(sw_key,Long.parseLong("080027af6a8f",16),(short)0,(short)1);
-        //this.addToPortIpMap(sw_key,Long.parseLong("080027ec8570",16),(short)0,(short)1,getStringIpToInt("192.168.57.10"));
-        //this.addToPortIpMap(sw_key,Long.parseLong("080027af6a8f",16),(short)0,(short)1,getStringIpToInt("192.168.58.10"));
+        this.addToPortMap(sw_key,Long.parseLong("080027ec8570",16),(short)0,(short)-2);//to local system
+        //this.addToPortMap(sw_key,Long.parseLong("08002700bc89",16),(short)0,(short)1); //to 192.168.57.1
+        //this.addToPortIpMap(sw_key,Long.parseLong("080027ec8570",16),(short)0,(short)(-2),getStringIpToInt("192.168.57.10"));
+        this.addToPortIpMap(sw_key,Long.parseLong("08002700bc89",16),(short)0,(short)1,getStringIpToInt("192.168.58.10"));
     }
 }

@@ -33,7 +33,7 @@ import org.openflow.util.U16;
  * @author Baohua Yang - Nov 107, 2012
  */
 public class OFPacketRemote extends OFMessage implements OFActionFactoryAware {
-    public static int MINIMUM_LENGTH = 16;
+    public static int MINIMUM_LENGTH = 16+4;
     public static int BUFFER_ID_NONE = 0xffffffff;
 
     protected OFActionFactory actionFactory;

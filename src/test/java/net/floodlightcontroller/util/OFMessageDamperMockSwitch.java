@@ -2,17 +2,21 @@ package net.floodlightcontroller.util;
 
 import static org.junit.Assert.*;
 import java.io.IOException;
+import java.net.SocketAddress;
 
 import java.util.Collection;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Future;
+import java.util.concurrent.locks.Lock;
 
 import net.floodlightcontroller.core.FloodlightContext;
 import net.floodlightcontroller.core.IOFMessageListener;
 import net.floodlightcontroller.core.IOFSwitch;
 import net.floodlightcontroller.core.IFloodlightProviderService.Role;
+import net.floodlightcontroller.core.internal.Controller;
+import net.floodlightcontroller.threadpool.IThreadPoolService;
 
 import org.jboss.netty.channel.Channel;
 import org.openflow.protocol.OFFeaturesReply;
@@ -94,12 +98,6 @@ public class OFMessageDamperMockSwitch implements IOFSwitch {
     @Override
     public void disconnectOutputStream() {
         assertTrue("Unexpected method call", false);
-    }
-    
-    @Override
-    public Channel getChannel() {
-        assertTrue("Unexpected method call", false);
-        return null;
     }
     
     @Override
@@ -189,6 +187,12 @@ public class OFMessageDamperMockSwitch implements IOFSwitch {
     }
     
     @Override
+    public SocketAddress getInetAddress() {
+        assertTrue("Unexpected method call", false);
+        return null;
+    }
+    
+    @Override
     public Map<Object, Object> getAttributes() {
         assertTrue("Unexpected method call", false);
         return null;
@@ -225,15 +229,9 @@ public class OFMessageDamperMockSwitch implements IOFSwitch {
     }
     
     @Override
-    public Role getRole() {
+    public Role getHARole() {
         assertTrue("Unexpected method call", false);
         return null;
-    }
-    
-    @Override
-    public boolean isActive() {
-        assertTrue("Unexpected method call", false);
-        return false;
     }
     
     @Override
@@ -344,6 +342,60 @@ public class OFMessageDamperMockSwitch implements IOFSwitch {
     public byte getTables() {
         // TODO Auto-generated method stub
         return 0;
+    }
+
+    @Override
+    public void setChannel(Channel channel) {
+        // TODO Auto-generated method stub
+        
+    }
+
+    @Override
+    public void setFloodlightProvider(Controller controller) {
+        // TODO Auto-generated method stub
+        
+    }
+
+    @Override
+    public void setThreadPoolService(IThreadPoolService threadPool) {
+        // TODO Auto-generated method stub
+        
+    }
+
+    @Override
+    public Lock getListenerReadLock() {
+        // TODO Auto-generated method stub
+        return null;
+    }
+
+    @Override
+    public Lock getListenerWriteLock() {
+        // TODO Auto-generated method stub
+        return null;
+    }
+
+    @Override
+    public void setHARole(Role role, boolean haRoleReplyReceived) {
+        // TODO Auto-generated method stub
+        
+    }
+
+    @Override
+    public OFPortType getPortType(short port_num) {
+        // TODO Auto-generated method stub
+        return null;
+    }
+
+    @Override
+    public boolean isFastPort(short port_num) {
+        // TODO Auto-generated method stub
+        return false;
+    }
+
+    @Override
+    public List<Short> getUplinkPorts() {
+        // TODO Auto-generated method stub
+        return null;
     }
 
 }

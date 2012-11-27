@@ -683,5 +683,8 @@ public class DCM
         		(short)0,(short)1,getStringIpToInt("192.168.58.10"));
         this.addToPortIpMap(new String("00:00:08:00:27:ab:b6:a5"),Long.parseLong("08002785cade",16),//sw2
         		(short)0,(short)1,getStringIpToInt("192.168.57.10"));
+        
+        this.addToPortIpMap(new String("00:00:08:00:27:ec:85:70"),Long.parseLong("080027abb6a5",16),//sw1
+        		(short)0,(short)1,getStringIpToInt("192.168.58.10"));
     }
 }

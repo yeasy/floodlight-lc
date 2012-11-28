@@ -29,29 +29,14 @@ import org.openflow.util.U16;
  * @author Rob Sherwood (rob.sherwood@stanford.edu)
  */
 public class OFActionRemote extends OFAction implements Cloneable {
-    public static int MINIMUM_LENGTH = 8+4;
+    public static int MINIMUM_LENGTH = 8+8;
 
     protected short port;//output port
     protected int	  ip;  //remote ip
-    protected short maxLength;
 
     public OFActionRemote() {
         super.setType(OFActionType.REMOTE);
         super.setLength((short) MINIMUM_LENGTH);
-    }
-
-    /**
-     * Create an Output Action sending packets out the specified
-     * OpenFlow port.
-     *
-     * This is the most common creation pattern for OFActions.
-     *
-     * @param port
-     * @param ip
-     */
-
-    public OFActionRemote(short port,int ip) {
-        this(port, ip, (short) 65535);
     }
 
     /**
@@ -60,17 +45,14 @@ public class OFActionRemote extends OFAction implements Cloneable {
      * The length field is only meaningful when port == OFPort.OFPP_CONTROLLER
      * @param port
      * @param ip
-     * @param maxLength The maximum number of bytes of the packet to send.
-     * Most hardware only supports this value for OFPP_CONTROLLER
      */
 
-    public OFActionRemote(short port, int ip, short maxLength) {
+    public OFActionRemote(short port, int ip) {
         super();
         super.setType(OFActionType.REMOTE);
         super.setLength((short) MINIMUM_LENGTH);
         this.port = port;
         this.ip   = ip;
-        this.maxLength = maxLength;
     }
 
     /**
@@ -87,23 +69,6 @@ public class OFActionRemote extends OFAction implements Cloneable {
      */
     public OFActionRemote setPort(short port) {
         this.port = port;
-        return this;
-    }
-
-    /**
-     * Get the max length to send to the controller
-     * @return
-     */
-    public short getMaxLength() {
-        return this.maxLength;
-    }
-
-    /**
-     * Set the max length to send to the controller
-     * @param maxLength
-     */
-    public OFActionRemote setMaxLength(short maxLength) {
-        this.maxLength = maxLength;
         return this;
     }
     
@@ -128,25 +93,26 @@ public class OFActionRemote extends OFAction implements Cloneable {
     public void readFrom(ChannelBuffer data) {
         super.readFrom(data);
         this.port = data.readShort();
+        data.readShort();
+        data.readInt();
         this.ip = data.readInt();
-        this.maxLength = data.readShort();
     }
 
     @Override
     public void writeTo(ChannelBuffer data) {
         super.writeTo(data);
         data.writeShort(port);
+        data.writeShort((short) 0);
+        data.writeInt(0);
         data.writeInt(ip);
-        data.writeShort(maxLength);
     }
 
     @Override
     public int hashCode() {
         final int prime = 367;
         int result = super.hashCode();
-        result = prime * result + maxLength;
-        result = prime * result + (short) ip;
-        result = prime * result + port;
+        result = prime * result + (short) port;
+        result = prime * result + ip;
         return result;
     }
 
@@ -162,9 +128,6 @@ public class OFActionRemote extends OFAction implements Cloneable {
             return false;
         }
         OFActionRemote other = (OFActionRemote) obj;
-        if (maxLength != other.maxLength) {
-            return false;
-        }
         if (ip != other.ip) {
             return false;
         }
@@ -179,8 +142,7 @@ public class OFActionRemote extends OFAction implements Cloneable {
      */
     @Override
     public String toString() {
-        return "OFActionRemote [maxLength=" + maxLength 
-        		+ ", ip=" + ip
+        return "OFActionRemote [ip=" + ip
                 + ", port=" + U16.f(port)
                 + ", length=" + length + ", type=" + type + "]";
     }

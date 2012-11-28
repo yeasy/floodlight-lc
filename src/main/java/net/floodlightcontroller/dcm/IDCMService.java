@@ -13,5 +13,5 @@ public interface IDCMService extends IFloodlightService {
      * @return The learned host table
      */
     public Map<IOFSwitch, Map<MacVlanPair,Short>> getTable();
-    public Map<IOFSwitch, Map<MacVlanPair,PortIpPair>> getRemoteTable();
+    public Map<String, Map<MacVlanPair,PortIpPair>> getRemoteTable();
 }

@@ -83,7 +83,7 @@ public class DCM
     
     // Stores the learned state for each switch
     protected Map<IOFSwitch, Map<MacVlanPair,Short>> macVlanToSwitchPortMap;
-    protected Map<IOFSwitch, Map<MacVlanPair,PortIpPair>> macVlanToPortIpMap;
+    protected Map<String, Map<MacVlanPair,PortIpPair>> macVlanToPortIpMap;
 
     // flow-mod - for use in the cookie
     public static final int DCM_APP_ID = 1;
@@ -121,7 +121,7 @@ public class DCM
 
     /**
      * Adds a host to the MAC/VLAN->SwitchPort mapping
-     * @param sw The switch to add the mapping to
+     * @param sw The switch's id to add the mapping to
      * @param mac The MAC address of the host to add
      * @param vlan The VLAN that the host is on
      * @param portVal The switchport that the host is on
@@ -145,14 +145,14 @@ public class DCM
     
     /**
      * Adds a host to the MAC/VLAN->SwitchPort/Ip mapping
-     * @param sw The switch to add the mapping to
+     * @param sw_id The switch's id to add the mapping to
      * @param mac The MAC address of the host to add
      * @param vlan The VLAN that the host is on
      * @param portVal The switch port that the host is on
      * @param ip The remote sw's ip address
      */
-    protected void addToPortIpMap(IOFSwitch sw, long mac, short vlan, short portVal, int ip) {
-        Map<MacVlanPair,PortIpPair> swMap = macVlanToPortIpMap.get(sw);
+    protected void addToPortIpMap(String sw_id, long mac, short vlan, short portVal, int ip) {
+        Map<MacVlanPair,PortIpPair> swMap = macVlanToPortIpMap.get(sw_id);
         
         if (vlan == (short) 0xffff) {
             // OFMatch.loadFromPacket sets VLAN ID to 0xffff if the packet contains no VLAN tag;
@@ -163,7 +163,7 @@ public class DCM
         if (swMap == null) {
             // May be accessed by REST API so we need to make it thread safe
             swMap = Collections.synchronizedMap(new LRULinkedHashMap<MacVlanPair,PortIpPair>(MAX_MACS_PER_SWITCH));
-            macVlanToPortIpMap.put(sw, swMap);
+            macVlanToPortIpMap.put(sw_id, swMap);
         }
         swMap.put(new MacVlanPair(mac, vlan), new PortIpPair(portVal,ip));
     }
@@ -219,16 +219,16 @@ public class DCM
     
     /**
      * Get the port/ip pair that a MAC/VLAN pair is associated with
-     * @param sw The switch to get the mapping from
+     * @param sw_id The switch's id to get the mapping from
      * @param mac The MAC address to get
      * @param vlan The VLAN number to get
      * @return The port/ip pair the remote action to
      */
-    public PortIpPair getFromPortIpMap(IOFSwitch sw, long mac, short vlan) {
+    public PortIpPair getFromPortIpMap(String sw_id, long mac, short vlan) {
         if (vlan == (short) 0xffff) {
             vlan = 0;
         }
-        Map<MacVlanPair,PortIpPair> swMap = macVlanToPortIpMap.get(sw);
+        Map<MacVlanPair,PortIpPair> swMap = macVlanToPortIpMap.get(sw_id);
         if (swMap != null)
             return swMap.get(new MacVlanPair(mac, vlan));
         
@@ -275,7 +275,7 @@ public class DCM
         return macVlanToSwitchPortMap;
     }
     
-    public synchronized Map<IOFSwitch, Map<MacVlanPair,PortIpPair>> getRemoteTable() {
+    public synchronized Map<String, Map<MacVlanPair,PortIpPair>> getRemoteTable() {
         return macVlanToPortIpMap;
     }
     
@@ -404,12 +404,11 @@ public class DCM
      * Writes an OFPacketRemote message to a switch.
      * @param sw The switch to write the PacketOut to.
      * @param packetInMessage The corresponding PacketIn.
-     * @param egressPort The switchport to output the PacketRemote.
-     * @param ip The remote ip
+     * @param remote: outport and encap ip
      */
     private void writePacketRemoteForPacketIn(IOFSwitch sw, 
                                           OFPacketIn packetInMessage, 
-                                          short egressPort, int ip) {
+                                          PortIpPair remote) {
         // from openflow 1.0 spec - need to set these on a struct ofp_packet_out:
         // uint32_t buffer_id; /* ID assigned by datapath (-1 if none). */
         // uint16_t in_port; /* Packet's input port (OFPP_NONE if none). */
@@ -430,7 +429,7 @@ public class DCM
         
         // set actions
         List<OFAction> actions = new ArrayList<OFAction>(1);      
-        actions.add(new OFActionRemote(egressPort, ip, (short) 0));
+        actions.add(new OFActionRemote(remote.port, remote.ip));
         packetRemoteMessage.setActions(actions);
 
         // set data - only if buffer_id == -1
@@ -474,11 +473,11 @@ public class DCM
         Long sourceMac = Ethernet.toLong(match.getDataLayerSource());
         Long destMac = Ethernet.toLong(match.getDataLayerDestination());
         Short vlan = match.getDataLayerVirtualLan();
-    	log.debug(">>>Receive packetIn msg from sw {}:Mac {} -> {}",new Object[]{ sw, HexString.toHexString(sourceMac),HexString.toHexString(destMac)});
+    	log.debug(">>>Receive PACKET_IN msg from sw {}:Mac {} -> {}",new Object[]{ sw, HexString.toHexString(sourceMac),HexString.toHexString(destMac)});
 
         if ((destMac & 0xfffffffffff0L) == 0x0180c2000000L) {
             if (log.isTraceEnabled()) {
-                log.trace("ignoring packet addressed to 802.1D/Q reserved addr: switch {} vlan {} dest MAC {}",
+                log.trace("Ignoring packet addressed to 802.1D/Q reserved addr: switch {} vlan {} dest MAC {}",
                           new Object[]{ sw, vlan, HexString.toHexString(destMac) });
             }
             return Command.STOP;
@@ -490,59 +489,70 @@ public class DCM
         
         // Now output flow-mod and/or packet
         Short outPort = getFromPortMap(sw, destMac, vlan);
-        outPort = null;
-        if (outPort == null) {
-            // If we haven't learned the port for the dest MAC/VLAN, flood it
-            // Don't flood broadcast packets if the broadcast is disabled.
-            // XXX For DCM this doesn't do much. The sourceMac is removed
-            //     from port map whenever a flow expires, so you would still see
-            //     a lot of floods.
-        	PortIpPair remote = getFromPortIpMap(this.sw_key,destMac,vlan);
-        	if(remote == null) {//not in bf_gdt, will flooding
-        		log.debug("Not in mac table and bf_gdt, will flooding.\n");
-        		this.writePacketOutForPacketIn(sw, pi, OFPort.OFPP_FLOOD.getValue());
-        	} else { //send remote cmd to sw
-        		log.debug("Found in bf_gdt, will send remote port={}, ip=0x{}.\n",remote.port, Integer.toHexString(remote.ip));
-        		this.writePacketRemoteForPacketIn(sw, pi, remote.port,remote.ip);
-        		outPort = remote.port;
-        	}
-        }
-        if(outPort != null) {
-        if (outPort == match.getInputPort()) {
-            log.trace("ignoring packet that arrived on same port as learned destination:"
-                    + " switch {} vlan {} dest MAC {} port {}",
-                    new Object[]{ sw, vlan, HexString.toHexString(destMac), outPort });
-        } else  {
-            // Add flow table entry matching source MAC, dest MAC, VLAN and input port
-            // that sends to the port we previously learned for the dest MAC/VLAN.  Also
-            // add a flow table entry with source and destination MACs reversed, and
-            // input and output ports reversed.  When either entry expires due to idle
-            // timeout, remove the other one.  This ensures that if a device moves to
-            // a different port, a constant stream of packets headed to the device at
-            // its former location does not keep the stale entry alive forever.
-            // FIXME: current HP switches ignore DL_SRC and DL_DST fields, so we have to match on
-            // NW_SRC and NW_DST as well
-            match.setWildcards(((Integer)sw.getAttribute(IOFSwitch.PROP_FASTWILDCARDS)).intValue()
-                    & ~OFMatch.OFPFW_IN_PORT
-                    & ~OFMatch.OFPFW_DL_VLAN & ~OFMatch.OFPFW_DL_SRC & ~OFMatch.OFPFW_DL_DST
-                    & ~OFMatch.OFPFW_NW_SRC_MASK & ~OFMatch.OFPFW_NW_DST_MASK);
-    		log.debug("Has outPort, will add flow {}, output={}, and the reversed one.\n",match,outPort);
-            this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, pi.getBufferId(), match, outPort);
-            if (DCM_REVERSE_FLOW) {
-                this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, -1, match.clone()
-                    .setDataLayerSource(match.getDataLayerDestination())
-                    .setDataLayerDestination(match.getDataLayerSource())
-                    .setNetworkSource(match.getNetworkDestination())
-                    .setNetworkDestination(match.getNetworkSource())
-                    .setTransportSource(match.getTransportDestination())
-                    .setTransportDestination(match.getTransportSource())
-                    .setInputPort(outPort),
-                    match.getInputPort());
-            }
-        }
-        }
-        return Command.CONTINUE;
-    }
+		if (outPort == null) {// not in local mac-table
+			// If we haven't learned the port for the dest MAC/VLAN, flood it
+			// Don't flood broadcast packets if the broadcast is disabled.
+			// XXX For DCM this doesn't do much. The sourceMac is removed
+			// from port map whenever a flow expires, so you would still see
+			// a lot of floods.
+			PortIpPair remote = getFromPortIpMap(sw.getStringId(), destMac, vlan);
+			if (remote != null) { //send remote cmd to sw
+				log.debug("Found in bf_gdt, will send remote port={}, ip=0x{}.\n",
+						remote.port, Integer.toHexString(remote.ip));
+				this.writePacketRemoteForPacketIn(sw, pi, remote);
+			} else {// not in bf_gdt neither, will flooding
+				log.debug("Not in mac table and bf_gdt, will flooding.\n");
+				this.writePacketOutForPacketIn(sw, pi, OFPort.OFPP_FLOOD.getValue());
+			} 
+		} else if (outPort == match.getInputPort()) {
+			log.trace(
+					"ignoring packet that arrived on same port as learned destination:"
+							+ " switch {} vlan {} dest MAC {} port {}",
+					new Object[] { sw, vlan, HexString.toHexString(destMac),
+							outPort });
+		} else {
+			// Add flow table entry matching source MAC, dest MAC, VLAN and
+			// input port
+			// that sends to the port we previously learned for the dest
+			// MAC/VLAN. Also
+			// add a flow table entry with source and destination MACs
+			// reversed, and
+			// input and output ports reversed. When either entry expires
+			// due to idle
+			// timeout, remove the other one. This ensures that if a device
+			// moves to
+			// a different port, a constant stream of packets headed to the
+			// device at
+			// its former location does not keep the stale entry alive
+			// forever.
+			// FIXME: current HP switches ignore DL_SRC and DL_DST fields,
+			// so we have to match on
+			// NW_SRC and NW_DST as well
+			match.setWildcards(((Integer) sw
+					.getAttribute(IOFSwitch.PROP_FASTWILDCARDS)).intValue()
+					& ~OFMatch.OFPFW_IN_PORT
+					& ~OFMatch.OFPFW_DL_VLAN
+					& ~OFMatch.OFPFW_DL_SRC
+					& ~OFMatch.OFPFW_DL_DST
+					& ~OFMatch.OFPFW_NW_SRC_MASK & ~OFMatch.OFPFW_NW_DST_MASK);
+			log.debug(
+					"Has outPort, will add flow {}, output={}, and the reversed one.\n",
+					match, outPort);
+			this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, pi.getBufferId(), match,
+					outPort);
+			if (DCM_REVERSE_FLOW) {
+				this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, -1, match.clone()
+						.setDataLayerSource(match.getDataLayerDestination())
+						.setDataLayerDestination(match.getDataLayerSource())
+						.setNetworkSource(match.getNetworkDestination())
+						.setNetworkDestination(match.getNetworkSource())
+						.setTransportSource(match.getTransportDestination())
+						.setTransportDestination(match.getTransportSource())
+						.setInputPort(outPort), match.getInputPort());
+			}
+		}
+		return Command.CONTINUE;
+	}
 
     /**
      * Processes a flow removed message. We will delete the learned MAC/VLAN mapping from
@@ -652,25 +662,26 @@ public class DCM
         macVlanToSwitchPortMap = 
                 new ConcurrentHashMap<IOFSwitch, Map<MacVlanPair,Short>>();
         macVlanToPortIpMap = 
-                new ConcurrentHashMap<IOFSwitch, Map<MacVlanPair,PortIpPair>>();
+                new ConcurrentHashMap<String, Map<MacVlanPair,PortIpPair>>();
         floodlightProvider =
                 context.getServiceImpl(IFloodlightProviderService.class);
         counterStore =
                 context.getServiceImpl(ICounterStoreService.class);
         restApi =
                 context.getServiceImpl(IRestApiService.class);
-        this.sw_key = new OFSwitchImpl();
     }
 
     @Override
     public void startUp(FloodlightModuleContext context) {
         floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
-        //floodlightProvider.addOFMessageListener(OFType.FLOW_REMOVED, this);
+        floodlightProvider.addOFMessageListener(OFType.FLOW_REMOVED, this);
         //floodlightProvider.addOFMessageListener(OFType.ERROR, this);
         restApi.addRestletRoutable(new DCMWebRoutable());
-        this.addToPortMap(sw_key,Long.parseLong("080027ec8570",16),(short)0,(short)-2);//to local system
         //this.addToPortMap(sw_key,Long.parseLong("08002700bc89",16),(short)0,(short)1); //to 192.168.57.1
         //this.addToPortIpMap(sw_key,Long.parseLong("080027ec8570",16),(short)0,(short)(-2),getStringIpToInt("192.168.57.10"));
-        this.addToPortIpMap(sw_key,Long.parseLong("08002700bc89",16),(short)0,(short)1,getStringIpToInt("192.168.58.10"));
+        this.addToPortIpMap(new String("00:00:08:00:27:85:ca:de"),Long.parseLong("080027abb6a5",16),//sw1
+        		(short)0,(short)1,getStringIpToInt("192.168.58.10"));
+        this.addToPortIpMap(new String("00:00:08:00:27:ab:b6:a5"),Long.parseLong("08002785cade",16),//sw2
+        		(short)0,(short)1,getStringIpToInt("192.168.57.10"));
     }
 }

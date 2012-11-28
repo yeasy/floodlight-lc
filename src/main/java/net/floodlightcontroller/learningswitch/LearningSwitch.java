@@ -328,6 +328,8 @@ public class LearningSwitch
         Long sourceMac = Ethernet.toLong(match.getDataLayerSource());
         Long destMac = Ethernet.toLong(match.getDataLayerDestination());
         Short vlan = match.getDataLayerVirtualLan();
+        log.debug("Received new PACKET_IN: switch {} vlan {} dest MAC {}",
+                          new Object[]{ sw, vlan, HexString.toHexString(destMac) });
         if ((destMac & 0xfffffffffff0L) == 0x0180c2000000L) {
             if (log.isTraceEnabled()) {
                 log.trace("ignoring packet addressed to 802.1D/Q reserved addr: switch {} vlan {} dest MAC {}",
@@ -348,12 +350,14 @@ public class LearningSwitch
             // XXX For LearningSwitch this doesn't do much. The sourceMac is removed
             //     from port map whenever a flow expires, so you would still see
             //     a lot of floods.
+        	log.debug("flooding packets");
             this.writePacketOutForPacketIn(sw, pi, OFPort.OFPP_FLOOD.getValue());
         } else if (outPort == match.getInputPort()) {
             log.trace("ignoring packet that arrived on same port as learned destination:"
                     + " switch {} vlan {} dest MAC {} port {}",
                     new Object[]{ sw, vlan, HexString.toHexString(destMac), outPort });
         } else {
+            log.debug("send to output port {}", outPort);
             // Add flow table entry matching source MAC, dest MAC, VLAN and input port
             // that sends to the port we previously learned for the dest MAC/VLAN.  Also
             // add a flow table entry with source and destination MACs reversed, and

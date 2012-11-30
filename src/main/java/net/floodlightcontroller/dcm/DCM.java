@@ -489,6 +489,7 @@ public class DCM
         
         // Now output flow-mod and/or packet
         Short outPort = getFromPortMap(sw, destMac, vlan);
+        //outPort = 1;
 		if (outPort == null) {// not in local mac-table
 			// If we haven't learned the port for the dest MAC/VLAN, flood it
 			// Don't flood broadcast packets if the broadcast is disabled.
@@ -677,7 +678,6 @@ public class DCM
         floodlightProvider.addOFMessageListener(OFType.FLOW_REMOVED, this);
         //floodlightProvider.addOFMessageListener(OFType.ERROR, this);
         restApi.addRestletRoutable(new DCMWebRoutable());
-        //this.addToPortMap(sw_key,Long.parseLong("08002700bc89",16),(short)0,(short)1); //to 192.168.57.1
         //this.addToPortIpMap(sw_key,Long.parseLong("080027ec8570",16),(short)0,(short)(-2),getStringIpToInt("192.168.57.10"));
         this.addToPortIpMap(new String("00:00:08:00:27:85:ca:de"),Long.parseLong("080027abb6a5",16),//sw1
         		(short)0,(short)1,getStringIpToInt("192.168.58.10"));

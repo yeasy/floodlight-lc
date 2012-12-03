@@ -22,7 +22,6 @@ package org.openflow.protocol.action;
 
 
 import org.jboss.netty.buffer.ChannelBuffer;
-import org.openflow.util.U16;
 
 /**
  * @author David Erickson (daviderickson@cs.stanford.edu) - Mar 11, 2010
@@ -109,9 +108,9 @@ public class OFActionRemote extends OFAction implements Cloneable {
 
     @Override
     public int hashCode() {
-        final int prime = 367;
+        final int prime = 349;
         int result = super.hashCode();
-        result = prime * result + (short) port;
+        result = prime * result + port;
         result = prime * result + ip;
         return result;
     }
@@ -128,10 +127,10 @@ public class OFActionRemote extends OFAction implements Cloneable {
             return false;
         }
         OFActionRemote other = (OFActionRemote) obj;
-        if (ip != other.ip) {
+        if (port != other.port) {
             return false;
         }
-        if (port != other.port) {
+        if (ip != other.ip) {
             return false;
         }
         return true;

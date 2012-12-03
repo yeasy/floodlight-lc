@@ -210,6 +210,7 @@ public abstract class OFSwitchBase implements IOFSwitch {
             if (role == Role.SLAVE) {
                 switch (m.getType()) {
                     case PACKET_OUT:
+                    case PACKET_REMOTE:
                     case FLOW_MOD:
                     case PORT_MOD:
                         log.warn("Sending OF message that modifies switch " +

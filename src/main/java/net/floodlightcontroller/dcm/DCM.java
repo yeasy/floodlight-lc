@@ -86,7 +86,7 @@ public class DCM
     protected Map<String, Map<MacVlanPair,PortIpPair>> macVlanToPortIpMap;
 
     // flow-mod - for use in the cookie
-    public static final int DCM_APP_ID = 1;
+    public static final int DCM_APP_ID = 2;
     // LOOK! This should probably go in some class that encapsulates
     // the app cookie management
     public static final int APP_ID_BITS = 12;
@@ -94,18 +94,15 @@ public class DCM
     public static final long DCM_COOKIE = (long) (DCM_APP_ID & ((1 << APP_ID_BITS) - 1)) << APP_ID_SHIFT;
     
     // more flow-mod defaults 
-    protected static final short IDLE_TIMEOUT_DEFAULT = 5;
-    protected static final short HARD_TIMEOUT_DEFAULT = 0;
-    protected static final short PRIORITY_DEFAULT = 100;
+    protected static short FLOWMOD_DEFAULT_IDLE_TIMEOUT = 5; // in seconds
+    protected static short FLOWMOD_DEFAULT_HARD_TIMEOUT = 0; // infinite
+    protected static short FLOWMOD_PRIORITY = 100;
     
     // for managing our map sizes
     protected static final int MAX_MACS_PER_SWITCH  = 1000;    
 
     // normally, setup reverse flow as well. Disable only for using cbench for comparison with NOX etc.
     protected static final boolean DCM_REVERSE_FLOW = true;
-    
-    // only used for the tmp key.
-    protected IOFSwitch sw_key;
     
     /**
      * @param floodlightProvider the floodlightProvider to set
@@ -121,7 +118,7 @@ public class DCM
 
     /**
      * Adds a host to the MAC/VLAN->SwitchPort mapping
-     * @param sw The switch's id to add the mapping to
+     * @param sw The switch to add the mapping to
      * @param mac The MAC address of the host to add
      * @param vlan The VLAN that the host is on
      * @param portVal The switchport that the host is on
@@ -316,9 +313,9 @@ public class DCM
         flowMod.setMatch(match);
         flowMod.setCookie(DCM.DCM_COOKIE);
         flowMod.setCommand(command);
-        flowMod.setIdleTimeout(DCM.IDLE_TIMEOUT_DEFAULT);
-        flowMod.setHardTimeout(DCM.HARD_TIMEOUT_DEFAULT);
-        flowMod.setPriority(DCM.PRIORITY_DEFAULT);
+        flowMod.setIdleTimeout(DCM.FLOWMOD_DEFAULT_IDLE_TIMEOUT);
+        flowMod.setHardTimeout(DCM.FLOWMOD_DEFAULT_HARD_TIMEOUT);
+        flowMod.setPriority(DCM.FLOWMOD_PRIORITY);
         flowMod.setBufferId(bufferId);
         flowMod.setOutPort((command == OFFlowMod.OFPFC_DELETE) ? outPort : OFPort.OFPP_NONE.getValue());
         flowMod.setFlags((command == OFFlowMod.OFPFC_DELETE) ? 0 : (short) (1 << 0)); // OFPFF_SEND_FLOW_REM
@@ -356,6 +353,7 @@ public class DCM
      * @param bufferId The buffer ID if the switch has buffered the packet.
      * @param match The OFMatch structure to write.
      * @param outPort The switch port to output it to.
+     * @param ip The remote ip to encap.
      */
     private void writeFlowMod(IOFSwitch sw, short command, int bufferId,
             OFMatch match, short outPort, int ip) {
@@ -386,9 +384,9 @@ public class DCM
         flowMod.setMatch(match);
         flowMod.setCookie(DCM.DCM_COOKIE);
         flowMod.setCommand(command);
-        flowMod.setIdleTimeout(DCM.IDLE_TIMEOUT_DEFAULT);
-        flowMod.setHardTimeout(DCM.HARD_TIMEOUT_DEFAULT);
-        flowMod.setPriority(DCM.PRIORITY_DEFAULT);
+        flowMod.setIdleTimeout(DCM.FLOWMOD_DEFAULT_IDLE_TIMEOUT);
+        flowMod.setHardTimeout(DCM.FLOWMOD_DEFAULT_HARD_TIMEOUT);
+        flowMod.setPriority(DCM.FLOWMOD_PRIORITY);
         flowMod.setBufferId(bufferId);
         flowMod.setOutPort((command == OFFlowMod.OFPFC_DELETE) ? outPort : OFPort.OFPP_NONE.getValue());
         flowMod.setFlags((command == OFFlowMod.OFPFC_DELETE) ? 0 : (short) (1 << 0)); // OFPFF_SEND_FLOW_REM
@@ -400,7 +398,7 @@ public class DCM
         // uint16_t port; /* Output port. */
         // uint16_t max_len; /* Max length to send to controller. */
         // type/len are set because it is OFActionOutput,
-        // and port, max_len are arguments to this constructor
+        // and port, ip are arguments to this constructor
         flowMod.setActions(Arrays.asList((OFAction) new OFActionRemote(outPort, ip)));
         flowMod.setLength((short) (OFFlowMod.MINIMUM_LENGTH + OFActionRemote.MINIMUM_LENGTH));
 
@@ -409,13 +407,166 @@ public class DCM
                       new Object[]{ sw, (command == OFFlowMod.OFPFC_DELETE) ? "deleting" : "adding", flowMod });
         }
 
-        counterStore.updatePktOutFMCounterStore(sw, flowMod);
+        counterStore.updatePktRemoteFMCounterStore(sw, flowMod);
         
         // and write it out
         try {
             sw.write(flowMod, null);
         } catch (IOException e) {
             log.error("Failed to write {} to switch {}", new Object[]{ flowMod, sw }, e);
+        }
+    }
+    
+    /**
+     * Pushes a packet-out to a switch.  The assumption here is that
+     * the packet-in was also generated from the same switch.  Thus, if the input
+     * port of the packet-in and the outport are the same, the function will not 
+     * push the packet-out.
+     * @param sw        switch that generated the packet-in, and from which packet-out is sent
+     * @param match     OFmatch
+     * @param pi        packet-in
+     * @param outport   output port
+     */
+    private void pushPacket(IOFSwitch sw, OFMatch match, OFPacketIn pi, short outport) {
+        if (pi == null) {
+            return;
+        }
+
+        // The assumption here is (sw) is the switch that generated the 
+        // packet-in. If the input port is the same as output port, then
+        // the packet-out should be ignored.
+        if (pi.getInPort() == outport) {
+            if (log.isDebugEnabled()) {
+                log.debug("Attempting to do packet-out to the same " + 
+                          "interface as packet-in. Dropping packet. " + 
+                          " SrcSwitch={}, match = {}, pi={}", 
+                          new Object[]{sw, match, pi});
+                return;
+            }
+        }
+
+        if (log.isTraceEnabled()) {
+            log.trace("PacketOut srcSwitch={} match={} pi={}", 
+                      new Object[] {sw, match, pi});
+        }
+
+        OFPacketOut po =
+                (OFPacketOut) floodlightProvider.getOFMessageFactory()
+                                                .getMessage(OFType.PACKET_OUT);
+
+        // set actions
+        List<OFAction> actions = new ArrayList<OFAction>();
+        actions.add(new OFActionOutput(outport, (short) 0xffff));
+
+        po.setActions(actions)
+          .setActionsLength((short) OFActionOutput.MINIMUM_LENGTH);
+        short poLength =
+                (short) (po.getActionsLength() + OFPacketOut.MINIMUM_LENGTH);
+
+        // If the switch doens't support buffering set the buffer id to be none
+        // otherwise it'll be the the buffer id of the PacketIn
+        if (sw.getBuffers() == 0) {
+            // We set the PI buffer id here so we don't have to check again below
+            pi.setBufferId(OFPacketOut.BUFFER_ID_NONE);
+            po.setBufferId(OFPacketOut.BUFFER_ID_NONE);
+        } else {
+            po.setBufferId(pi.getBufferId());
+        }
+
+        po.setInPort(pi.getInPort());
+
+        // If the buffer id is none or the switch doesn's support buffering
+        // we send the data with the packet out
+        if (pi.getBufferId() == OFPacketOut.BUFFER_ID_NONE) {
+            byte[] packetData = pi.getPacketData();
+            poLength += packetData.length;
+            po.setPacketData(packetData);
+        }
+
+        po.setLength(poLength);
+
+        try {
+            counterStore.updatePktOutFMCounterStoreLocal(sw, po);
+            sw.write(po, null);
+        } catch (IOException e) {
+            log.error("Failure writing packet out", e);
+        }
+    }
+    
+    /**
+     * Pushes a packet-out to a switch.  The assumption here is that
+     * the packet-in was also generated from the same switch.  Thus, if the input
+     * port of the packet-in and the outport are the same, the function will not 
+     * push the packet-out.
+     * @param sw        switch that generated the packet-in, and from which packet-out is sent
+     * @param match     OFmatch
+     * @param pi        packet-in
+     * @param outport   output port
+     * @param ip		remote ip to encap
+     */
+    private void pushPacketRemote(IOFSwitch sw, OFMatch match, OFPacketIn pi, short outport, int ip) {
+        if (pi == null) {
+            return;
+        }
+
+        // The assumption here is (sw) is the switch that generated the 
+        // packet-in. If the input port is the same as output port, then
+        // the packet-out should be ignored.
+        if (pi.getInPort() == outport) {
+            if (log.isDebugEnabled()) {
+                log.debug("Attempting to do packet-remote to the same " + 
+                          "interface as packet-in. Dropping packet. " + 
+                          " SrcSwitch={}, match = {}, pi={}", 
+                          new Object[]{sw, match, pi});
+                return;
+            }
+        }
+
+        if (log.isTraceEnabled()) {
+            log.trace("PacketRemote srcSwitch={} match={} pi={}", 
+                      new Object[] {sw, match, pi});
+        }
+
+        OFPacketRemote pr =
+                (OFPacketRemote) floodlightProvider.getOFMessageFactory()
+                                                .getMessage(OFType.PACKET_REMOTE);
+
+        // set actions
+        List<OFAction> actions = new ArrayList<OFAction>();
+        actions.add(new OFActionRemote(outport, ip));
+
+        pr.setActions(actions)
+          .setActionsLength((short) OFActionRemote.MINIMUM_LENGTH);
+        short poLength =
+                (short) (pr.getActionsLength() + OFPacketRemote.MINIMUM_LENGTH);
+
+        // If the switch doens't support buffering set the buffer id to be none
+        // otherwise it'll be the the buffer id of the PacketIn
+        if (sw.getBuffers() == 0) {
+            // We set the PI buffer id here so we don't have to check again below
+            pi.setBufferId(OFPacketRemote.BUFFER_ID_NONE);
+            pr.setBufferId(OFPacketRemote.BUFFER_ID_NONE);
+        } else {
+            pr.setBufferId(pi.getBufferId());
+        }
+
+        pr.setInPort(pi.getInPort());
+
+        // If the buffer id is none or the switch doesn's support buffering
+        // we send the data with the packet out
+        if (pi.getBufferId() == OFPacketRemote.BUFFER_ID_NONE) {
+            byte[] packetData = pi.getPacketData();
+            poLength += packetData.length;
+            pr.setPacketData(packetData);
+        }
+
+        pr.setLength(poLength);
+
+        try {
+            counterStore.updatePktRemoteFMCounterStoreLocal(sw, pr);
+            sw.write(pr, null);
+        } catch (IOException e) {
+            log.error("Failure writing packet out", e);
         }
     }
     
@@ -571,18 +722,16 @@ public class DCM
 				log.debug("Found in bf_gdt, will send remote port={}, ip=0x{}.\n",
 						remote.port, Integer.toHexString(remote.ip));
 				this.writePacketRemoteForPacketIn(sw, pi, remote);
-				match.setWildcards(((Integer) sw
-						.getAttribute(IOFSwitch.PROP_FASTWILDCARDS)).intValue()
-						& ~OFMatch.OFPFW_IN_PORT
-						& ~OFMatch.OFPFW_DL_VLAN
-						& ~OFMatch.OFPFW_DL_SRC
-						& ~OFMatch.OFPFW_DL_DST
-						& ~OFMatch.OFPFW_NW_SRC_MASK & ~OFMatch.OFPFW_NW_DST_MASK);
+				match.setWildcards(((Integer)sw.getAttribute(IOFSwitch.PROP_FASTWILDCARDS)).intValue()
+	                    & ~OFMatch.OFPFW_IN_PORT
+	                    & ~OFMatch.OFPFW_DL_VLAN & ~OFMatch.OFPFW_DL_SRC & ~OFMatch.OFPFW_DL_DST
+	                    & ~OFMatch.OFPFW_NW_SRC_MASK & ~OFMatch.OFPFW_NW_DST_MASK);
 				log.debug("REMOTE: will add flow {},",match);
 				log.debug("remote port={}, ip=0x{}.\n",remote.port, Integer.toHexString(remote.ip));
-				this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, pi.getBufferId(), match,
-						remote.port);
-				//this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, pi.getBufferId(), match,remote.port,remote.ip);
+				this.pushPacket(sw, match, pi, remote.port);
+	            this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, OFPacketOut.BUFFER_ID_NONE, match, remote.port);
+				//this.pushPacketRemote(sw, match, pi, remote.port,remote.ip);
+	            //this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, OFPacketRemote.BUFFER_ID_NONE, match, remote.port,remote.ip);
 				/*if (DCM_REVERSE_FLOW) {
 					this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, -1, match.clone()
 							.setDataLayerSource(match.getDataLayerDestination())
@@ -604,46 +753,34 @@ public class DCM
 					new Object[] { sw, vlan, HexString.toHexString(destMac),
 							outPort });
 		} else {
-			// Add flow table entry matching source MAC, dest MAC, VLAN and
-			// input port
-			// that sends to the port we previously learned for the dest
-			// MAC/VLAN. Also
-			// add a flow table entry with source and destination MACs
-			// reversed, and
-			// input and output ports reversed. When either entry expires
-			// due to idle
-			// timeout, remove the other one. This ensures that if a device
-			// moves to
-			// a different port, a constant stream of packets headed to the
-			// device at
-			// its former location does not keep the stale entry alive
-			// forever.
-			// FIXME: current HP switches ignore DL_SRC and DL_DST fields,
-			// so we have to match on
-			// NW_SRC and NW_DST as well
-			match.setWildcards(((Integer) sw
-					.getAttribute(IOFSwitch.PROP_FASTWILDCARDS)).intValue()
-					& ~OFMatch.OFPFW_IN_PORT
-					& ~OFMatch.OFPFW_DL_VLAN
-					& ~OFMatch.OFPFW_DL_SRC
-					& ~OFMatch.OFPFW_DL_DST
-					& ~OFMatch.OFPFW_NW_SRC_MASK & ~OFMatch.OFPFW_NW_DST_MASK);
-			log.debug(
-					"Has outPort, will add flow {}, output={}, and the reversed one.\n",
-					match, outPort);
-			this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, pi.getBufferId(), match,
-					outPort);
-			if (DCM_REVERSE_FLOW) {
-				this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, -1, match.clone()
-						.setDataLayerSource(match.getDataLayerDestination())
-						.setDataLayerDestination(match.getDataLayerSource())
-						.setNetworkSource(match.getNetworkDestination())
-						.setNetworkDestination(match.getNetworkSource())
-						.setTransportSource(match.getTransportDestination())
-						.setTransportDestination(match.getTransportSource())
-						.setInputPort(outPort), match.getInputPort());
-			}
-		}
+			// Add flow table entry matching source MAC, dest MAC, VLAN and input port
+            // that sends to the port we previously learned for the dest MAC/VLAN.  Also
+            // add a flow table entry with source and destination MACs reversed, and
+            // input and output ports reversed.  When either entry expires due to idle
+            // timeout, remove the other one.  This ensures that if a device moves to
+            // a different port, a constant stream of packets headed to the device at
+            // its former location does not keep the stale entry alive forever.
+            // FIXME: current HP switches ignore DL_SRC and DL_DST fields, so we have to match on
+            // NW_SRC and NW_DST as well
+			match.setWildcards(((Integer)sw.getAttribute(IOFSwitch.PROP_FASTWILDCARDS)).intValue()
+                    & ~OFMatch.OFPFW_IN_PORT
+                    & ~OFMatch.OFPFW_DL_VLAN & ~OFMatch.OFPFW_DL_SRC & ~OFMatch.OFPFW_DL_DST
+                    & ~OFMatch.OFPFW_NW_SRC_MASK & ~OFMatch.OFPFW_NW_DST_MASK);
+            // We write FlowMods with Buffer ID none then explicitly PacketOut the buffered packet
+            this.pushPacket(sw, match, pi, outPort);
+            this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, OFPacketOut.BUFFER_ID_NONE, match, outPort);
+            if (DCM_REVERSE_FLOW) {
+                this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, -1, match.clone()
+                    .setDataLayerSource(match.getDataLayerDestination())
+                    .setDataLayerDestination(match.getDataLayerSource())
+                    .setNetworkSource(match.getNetworkDestination())
+                    .setNetworkDestination(match.getNetworkSource())
+                    .setTransportSource(match.getTransportDestination())
+                    .setTransportDestination(match.getTransportSource())
+                    .setInputPort(outPort),
+                    match.getInputPort());
+            }
+        }
 		return Command.CONTINUE;
 	}
 
@@ -770,7 +907,46 @@ public class DCM
         floodlightProvider.addOFMessageListener(OFType.FLOW_REMOVED, this);
         //floodlightProvider.addOFMessageListener(OFType.ERROR, this);
         restApi.addRestletRoutable(new DCMWebRoutable());
-        //this.addToPortIpMap(sw_key,Long.parseLong("080027ec8570",16),(short)0,(short)(-2),getStringIpToInt("192.168.57.10"));
+
+     // read our config options
+        Map<String, String> configOptions = context.getConfigParams(this);
+        try {
+            String idleTimeout = configOptions.get("idletimeout");
+            if (idleTimeout != null) {
+                FLOWMOD_DEFAULT_IDLE_TIMEOUT = Short.parseShort(idleTimeout);
+            }
+        } catch (NumberFormatException e) {
+            log.warn("Error parsing flow idle timeout, " +
+                     "using default of {} seconds",
+                     FLOWMOD_DEFAULT_IDLE_TIMEOUT);
+        }
+        try {
+            String hardTimeout = configOptions.get("hardtimeout");
+            if (hardTimeout != null) {
+                FLOWMOD_DEFAULT_HARD_TIMEOUT = Short.parseShort(hardTimeout);
+            }
+        } catch (NumberFormatException e) {
+            log.warn("Error parsing flow hard timeout, " +
+                     "using default of {} seconds",
+                     FLOWMOD_DEFAULT_HARD_TIMEOUT);
+        }
+        try {
+            String priority = configOptions.get("priority");
+            if (priority != null) {
+                FLOWMOD_PRIORITY = Short.parseShort(priority);
+            }
+        } catch (NumberFormatException e) {
+            log.warn("Error parsing flow priority, " +
+                     "using default of {}",
+                     FLOWMOD_PRIORITY);
+        }
+        log.debug("FlowMod idle timeout set to {} seconds", 
+                  FLOWMOD_DEFAULT_IDLE_TIMEOUT);
+        log.debug("FlowMod hard timeout set to {} seconds", 
+                  FLOWMOD_DEFAULT_HARD_TIMEOUT);
+        log.debug("FlowMod priority set to {}", 
+                FLOWMOD_PRIORITY);
+        
         this.addToPortIpMap(new String("00:00:08:00:27:85:ca:de"),Long.parseLong("080027abb6a5",16),//sw1
         		(short)0,(short)1,getStringIpToInt("192.168.58.10"));
         this.addToPortIpMap(new String("00:00:08:00:27:ab:b6:a5"),Long.parseLong("08002785cade",16),//sw2

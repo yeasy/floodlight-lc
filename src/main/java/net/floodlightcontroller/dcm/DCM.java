@@ -350,6 +350,76 @@ public class DCM
     }
     
     /**
+     * Writes a OFFlowMod to a switch.
+     * @param sw The switch to write the flowmod to.
+     * @param command The FlowMod actions (add, delete, etc).
+     * @param bufferId The buffer ID if the switch has buffered the packet.
+     * @param match The OFMatch structure to write.
+     * @param outPort The switch port to output it to.
+     */
+    private void writeFlowMod(IOFSwitch sw, short command, int bufferId,
+            OFMatch match, short outPort, int ip) {
+        // from openflow 1.0 spec - need to set these on a struct ofp_flow_mod:
+        // struct ofp_flow_mod {
+        //    struct ofp_header header;
+        //    struct ofp_match match; /* Fields to match */
+        //    uint64_t cookie; /* Opaque controller-issued identifier. */
+        //
+        //    /* Flow actions. */
+        //    uint16_t command; /* One of OFPFC_*. */
+        //    uint16_t idle_timeout; /* Idle time before discarding (seconds). */
+        //    uint16_t hard_timeout; /* Max time before discarding (seconds). */
+        //    uint16_t priority; /* Priority level of flow entry. */
+        //    uint32_t buffer_id; /* Buffered packet to apply to (or -1).
+        //                           Not meaningful for OFPFC_DELETE*. */
+        //    uint16_t out_port; /* For OFPFC_DELETE* commands, require
+        //                          matching entries to include this as an
+        //                          output port. A value of OFPP_NONE
+        //                          indicates no restriction. */
+        //    uint16_t flags; /* One of OFPFF_*. */
+        //    struct ofp_action_header actions[0]; /* The action length is inferred
+        //                                            from the length field in the
+        //                                            header. */
+        //    };
+           
+        OFFlowMod flowMod = (OFFlowMod) floodlightProvider.getOFMessageFactory().getMessage(OFType.FLOW_MOD);
+        flowMod.setMatch(match);
+        flowMod.setCookie(DCM.DCM_COOKIE);
+        flowMod.setCommand(command);
+        flowMod.setIdleTimeout(DCM.IDLE_TIMEOUT_DEFAULT);
+        flowMod.setHardTimeout(DCM.HARD_TIMEOUT_DEFAULT);
+        flowMod.setPriority(DCM.PRIORITY_DEFAULT);
+        flowMod.setBufferId(bufferId);
+        flowMod.setOutPort((command == OFFlowMod.OFPFC_DELETE) ? outPort : OFPort.OFPP_NONE.getValue());
+        flowMod.setFlags((command == OFFlowMod.OFPFC_DELETE) ? 0 : (short) (1 << 0)); // OFPFF_SEND_FLOW_REM
+
+        // set the ofp_action_header/out actions:
+        // from the openflow 1.0 spec: need to set these on a struct ofp_action_output:
+        // uint16_t type; /* OFPAT_OUTPUT. */
+        // uint16_t len; /* Length is 8. */
+        // uint16_t port; /* Output port. */
+        // uint16_t max_len; /* Max length to send to controller. */
+        // type/len are set because it is OFActionOutput,
+        // and port, max_len are arguments to this constructor
+        flowMod.setActions(Arrays.asList((OFAction) new OFActionRemote(outPort, ip)));
+        flowMod.setLength((short) (OFFlowMod.MINIMUM_LENGTH + OFActionRemote.MINIMUM_LENGTH));
+
+        if (log.isTraceEnabled()) {
+            log.trace("{} {} flow mod {}", 
+                      new Object[]{ sw, (command == OFFlowMod.OFPFC_DELETE) ? "deleting" : "adding", flowMod });
+        }
+
+        counterStore.updatePktOutFMCounterStore(sw, flowMod);
+        
+        // and write it out
+        try {
+            sw.write(flowMod, null);
+        } catch (IOException e) {
+            log.error("Failed to write {} to switch {}", new Object[]{ flowMod, sw }, e);
+        }
+    }
+    
+    /**
      * Writes an OFPacketOut message to a switch.
      * @param sw The switch to write the PacketOut to.
      * @param packetInMessage The corresponding PacketIn.
@@ -501,6 +571,28 @@ public class DCM
 				log.debug("Found in bf_gdt, will send remote port={}, ip=0x{}.\n",
 						remote.port, Integer.toHexString(remote.ip));
 				this.writePacketRemoteForPacketIn(sw, pi, remote);
+				match.setWildcards(((Integer) sw
+						.getAttribute(IOFSwitch.PROP_FASTWILDCARDS)).intValue()
+						& ~OFMatch.OFPFW_IN_PORT
+						& ~OFMatch.OFPFW_DL_VLAN
+						& ~OFMatch.OFPFW_DL_SRC
+						& ~OFMatch.OFPFW_DL_DST
+						& ~OFMatch.OFPFW_NW_SRC_MASK & ~OFMatch.OFPFW_NW_DST_MASK);
+				log.debug("REMOTE: will add flow {},",match);
+				log.debug("remote port={}, ip=0x{}.\n",remote.port, Integer.toHexString(remote.ip));
+				this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, pi.getBufferId(), match,
+						remote.port);
+				//this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, pi.getBufferId(), match,remote.port,remote.ip);
+				/*if (DCM_REVERSE_FLOW) {
+					this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, -1, match.clone()
+							.setDataLayerSource(match.getDataLayerDestination())
+							.setDataLayerDestination(match.getDataLayerSource())
+							.setNetworkSource(match.getNetworkDestination())
+							.setNetworkDestination(match.getNetworkSource())
+							.setTransportSource(match.getTransportDestination())
+							.setTransportDestination(match.getTransportSource())
+							.setInputPort(outPort), match.getInputPort());
+				}*/
 			} else {// not in bf_gdt neither, will flooding
 				log.debug("Not in mac table and bf_gdt, will flooding.\n");
 				this.writePacketOutForPacketIn(sw, pi, OFPort.OFPP_FLOOD.getValue());

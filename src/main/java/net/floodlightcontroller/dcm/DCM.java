@@ -392,12 +392,12 @@ public class DCM
         flowMod.setFlags((command == OFFlowMod.OFPFC_DELETE) ? 0 : (short) (1 << 0)); // OFPFF_SEND_FLOW_REM
 
         // set the ofp_action_header/out actions:
-        // from the openflow 1.0 spec: need to set these on a struct ofp_action_output:
+        // from the openflow 1.0 spec: need to set these on a struct ofp_action_remote:
         // uint16_t type; /* OFPAT_OUTPUT. */
         // uint16_t len; /* Length is 8. */
         // uint16_t port; /* Output port. */
-        // uint16_t max_len; /* Max length to send to controller. */
-        // type/len are set because it is OFActionOutput,
+        // uint32_t ip; /* Remote IP. */
+        // type/len are set because it is OFActionRemote,
         // and port, ip are arguments to this constructor
         flowMod.setActions(Arrays.asList((OFAction) new OFActionRemote(outPort, ip)));
         flowMod.setLength((short) (OFFlowMod.MINIMUM_LENGTH + OFActionRemote.MINIMUM_LENGTH));

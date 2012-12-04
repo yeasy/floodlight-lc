@@ -695,7 +695,7 @@ public class DCM
         Long destMac = Ethernet.toLong(match.getDataLayerDestination());
         Short type =new Short(match.getDataLayerType());
         Short vlan = match.getDataLayerVirtualLan();
-    	log.debug(">>>Receive PACKET_IN at sw {}:Mac {}->{}:0x{}",new Object[]{ sw, 
+    	log.debug(">>>Receive PACKET_IN at sw {}:Mac {}->{}, type=0x{}",new Object[]{ sw, 
     			HexString.toHexString(sourceMac),HexString.toHexString(destMac),HexString.toHexString(type)});
 
         if ((destMac & 0xfffffffffff0L) == 0x0180c2000000L) {
@@ -731,8 +731,8 @@ public class DCM
 				log.debug("remote port={}, ip=0x{}.\n",remote.port, Integer.toHexString(remote.ip));
 				//this.pushPacket(sw, match, pi, remote.port);
 	            //this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, OFPacketOut.BUFFER_ID_NONE, match, remote.port);
-				this.pushPacketRemote(sw, match, pi, remote.port,remote.ip);
-	            this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, OFPacketRemote.BUFFER_ID_NONE, match, remote.port,remote.ip);
+				//this.pushPacketRemote(sw, match, pi, remote.port,remote.ip);
+	            //this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, OFPacketRemote.BUFFER_ID_NONE, match, remote.port,remote.ip);
 				/*if (DCM_REVERSE_FLOW) {
 					this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, -1, match.clone()
 							.setDataLayerSource(match.getDataLayerDestination())

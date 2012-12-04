@@ -94,7 +94,7 @@ public class DCM
     public static final long DCM_COOKIE = (long) (DCM_APP_ID & ((1 << APP_ID_BITS) - 1)) << APP_ID_SHIFT;
     
     // more flow-mod defaults 
-    protected static short FLOWMOD_DEFAULT_IDLE_TIMEOUT = 5; // in seconds
+    protected static short FLOWMOD_DEFAULT_IDLE_TIMEOUT = 600; // in seconds
     protected static short FLOWMOD_DEFAULT_HARD_TIMEOUT = 0; // infinite
     protected static short FLOWMOD_PRIORITY = 100;
     
@@ -494,10 +494,10 @@ public class DCM
     }
     
     /**
-     * Pushes a packet-out to a switch.  The assumption here is that
+     * Pushes a packet-remote to a switch.  The assumption here is that
      * the packet-in was also generated from the same switch.  Thus, if the input
      * port of the packet-in and the outport are the same, the function will not 
-     * push the packet-out.
+     * push the packet-remote.
      * @param sw        switch that generated the packet-in, and from which packet-out is sent
      * @param match     OFmatch
      * @param pi        packet-in
@@ -537,7 +537,7 @@ public class DCM
 
         pr.setActions(actions)
           .setActionsLength((short) OFActionRemote.MINIMUM_LENGTH);
-        short poLength =
+        short prLength =
                 (short) (pr.getActionsLength() + OFPacketRemote.MINIMUM_LENGTH);
 
         // If the switch doens't support buffering set the buffer id to be none
@@ -556,17 +556,17 @@ public class DCM
         // we send the data with the packet out
         if (pi.getBufferId() == OFPacketRemote.BUFFER_ID_NONE) {
             byte[] packetData = pi.getPacketData();
-            poLength += packetData.length;
+            prLength += packetData.length;
             pr.setPacketData(packetData);
         }
 
-        pr.setLength(poLength);
+        pr.setLength(prLength);
 
         try {
             counterStore.updatePktRemoteFMCounterStoreLocal(sw, pr);
             sw.write(pr, null);
         } catch (IOException e) {
-            log.error("Failure writing packet out", e);
+            log.error("Failure writing packet remote", e);
         }
     }
     
@@ -693,8 +693,10 @@ public class DCM
         match.loadFromPacket(pi.getPacketData(), pi.getInPort());
         Long sourceMac = Ethernet.toLong(match.getDataLayerSource());
         Long destMac = Ethernet.toLong(match.getDataLayerDestination());
+        Short type =new Short(match.getDataLayerType());
         Short vlan = match.getDataLayerVirtualLan();
-    	log.debug(">>>Receive PACKET_IN msg from sw {}:Mac {} -> {}",new Object[]{ sw, HexString.toHexString(sourceMac),HexString.toHexString(destMac)});
+    	log.debug(">>>Receive PACKET_IN at sw {}:Mac {}->{}:0x{}",new Object[]{ sw, 
+    			HexString.toHexString(sourceMac),HexString.toHexString(destMac),HexString.toHexString(type)});
 
         if ((destMac & 0xfffffffffff0L) == 0x0180c2000000L) {
             if (log.isTraceEnabled()) {
@@ -721,17 +723,16 @@ public class DCM
 			if (remote != null) { //send remote cmd to sw
 				log.debug("Found in bf_gdt, will send remote port={}, ip=0x{}.\n",
 						remote.port, Integer.toHexString(remote.ip));
-				this.writePacketRemoteForPacketIn(sw, pi, remote);
 				match.setWildcards(((Integer)sw.getAttribute(IOFSwitch.PROP_FASTWILDCARDS)).intValue()
 	                    & ~OFMatch.OFPFW_IN_PORT
 	                    & ~OFMatch.OFPFW_DL_VLAN & ~OFMatch.OFPFW_DL_SRC & ~OFMatch.OFPFW_DL_DST
 	                    & ~OFMatch.OFPFW_NW_SRC_MASK & ~OFMatch.OFPFW_NW_DST_MASK);
 				log.debug("REMOTE: will add flow {},",match);
 				log.debug("remote port={}, ip=0x{}.\n",remote.port, Integer.toHexString(remote.ip));
-				this.pushPacket(sw, match, pi, remote.port);
-	            this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, OFPacketOut.BUFFER_ID_NONE, match, remote.port);
-				//this.pushPacketRemote(sw, match, pi, remote.port,remote.ip);
-	            //this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, OFPacketRemote.BUFFER_ID_NONE, match, remote.port,remote.ip);
+				//this.pushPacket(sw, match, pi, remote.port);
+	            //this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, OFPacketOut.BUFFER_ID_NONE, match, remote.port);
+				this.pushPacketRemote(sw, match, pi, remote.port,remote.ip);
+	            this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, OFPacketRemote.BUFFER_ID_NONE, match, remote.port,remote.ip);
 				/*if (DCM_REVERSE_FLOW) {
 					this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, -1, match.clone()
 							.setDataLayerSource(match.getDataLayerDestination())

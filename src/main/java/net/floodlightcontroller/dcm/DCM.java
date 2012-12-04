@@ -694,7 +694,7 @@ public class DCM
         Long destMac = Ethernet.toLong(match.getDataLayerDestination());
         Short type =new Short(match.getDataLayerType());
         Short vlan = match.getDataLayerVirtualLan();
-    	log.debug(">>>Receive PACKET_IN at sw {}:Mac {}->{}, type=0x{}",new Object[]{ sw, 
+    	log.debug("Received PACKET_IN at sw {}:Mac {}->{}, type=0x{}",new Object[]{ sw, 
     			HexString.toHexString(sourceMac),HexString.toHexString(destMac),HexString.toHexString(type)});
 
         if ((destMac & 0xfffffffffff0L) == 0x0180c2000000L) {
@@ -904,7 +904,7 @@ public class DCM
     public void startUp(FloodlightModuleContext context) {
         floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
         floodlightProvider.addOFMessageListener(OFType.FLOW_REMOVED, this);
-        //floodlightProvider.addOFMessageListener(OFType.ERROR, this);
+        floodlightProvider.addOFMessageListener(OFType.ERROR, this);
         restApi.addRestletRoutable(new DCMWebRoutable());
 
      // read our config options

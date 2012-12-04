@@ -720,14 +720,13 @@ public class DCM
 			// a lot of floods.
 			PortIpPair remote = getFromPortIpMap(sw.getStringId(), destMac, vlan);
 			if (remote != null) { //send remote cmd to sw
-				log.debug("Found in bf_gdt, will send remote port={}, ip=0x{}.\n",
+				log.debug("Found in bf_gdt, will send remote port={}, ip=0x{}.",
 						remote.port, Integer.toHexString(remote.ip));
 				match.setWildcards(((Integer)sw.getAttribute(IOFSwitch.PROP_FASTWILDCARDS)).intValue()
 	                    & ~OFMatch.OFPFW_IN_PORT
 	                    & ~OFMatch.OFPFW_DL_VLAN & ~OFMatch.OFPFW_DL_SRC & ~OFMatch.OFPFW_DL_DST
 	                    & ~OFMatch.OFPFW_NW_SRC_MASK & ~OFMatch.OFPFW_NW_DST_MASK);
-				log.debug("REMOTE: will add flow {},",match);
-				log.debug("remote port={}, ip=0x{}.\n",remote.port, Integer.toHexString(remote.ip));
+				log.debug("REMOTE: will add flow {}",match);
 				//this.pushPacket(sw, match, pi, remote.port);
 	            //this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, OFPacketOut.BUFFER_ID_NONE, match, remote.port);
 				this.pushPacketRemote(sw, match, pi, remote.port,remote.ip);

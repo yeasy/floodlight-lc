@@ -34,7 +34,7 @@ count:
 
 run: 
 	ant
-	java -jar target/floodlight.jar
+	java -jar target/floodlight.jar -cf src/main/resources/dcm.properties
 
 clean:
 	ant clean

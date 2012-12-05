@@ -22,6 +22,7 @@ package org.openflow.protocol.action;
 
 
 import org.jboss.netty.buffer.ChannelBuffer;
+import org.openflow.util.U16;
 
 /**
  * @author David Erickson (daviderickson@cs.stanford.edu) - Mar 11, 2010

@@ -731,8 +731,8 @@ public class DCM
 				log.debug("remote port={}, ip=0x{}.\n",remote.port, Integer.toHexString(remote.ip));
 				//this.pushPacket(sw, match, pi, remote.port);
 	            //this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, OFPacketOut.BUFFER_ID_NONE, match, remote.port);
-				//this.pushPacketRemote(sw, match, pi, remote.port,remote.ip);
-	            //this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, OFPacketRemote.BUFFER_ID_NONE, match, remote.port,remote.ip);
+				this.pushPacketRemote(sw, match, pi, remote.port,remote.ip);
+	            this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, OFPacketRemote.BUFFER_ID_NONE, match, remote.port,remote.ip);
 				/*if (DCM_REVERSE_FLOW) {
 					this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, -1, match.clone()
 							.setDataLayerSource(match.getDataLayerDestination())
@@ -948,12 +948,15 @@ public class DCM
         log.debug("FlowMod priority set to {}", 
                 FLOWMOD_PRIORITY);
         
-        this.addToPortIpMap(new String("00:00:08:00:27:85:ca:de"),Long.parseLong("080027abb6a5",16),//sw1
-        		(short)0,(short)1,getStringIpToInt("192.168.58.10"));
-        this.addToPortIpMap(new String("00:00:08:00:27:ab:b6:a5"),Long.parseLong("08002785cade",16),//sw2
+        //crl-sw1
+        this.addToPortIpMap(new String("00:00:08:00:27:85:ca:de"),Long.parseLong("080027abb6a5",16),
+        		(short)0,(short)1,getStringIpToInt("192.168.58.10"));   
+        //crl-sw2
+        this.addToPortIpMap(new String("00:00:08:00:27:ab:b6:a5"),Long.parseLong("08002785cade",16),
         		(short)0,(short)1,getStringIpToInt("192.168.57.10"));
         
-        this.addToPortIpMap(new String("00:00:08:00:27:ec:85:70"),Long.parseLong("080027abb6a5",16),//sw1
+        //thu-sw1
+        this.addToPortIpMap(new String("00:00:08:00:27:ec:85:70"),Long.parseLong("080027abb6a5",16),
         		(short)0,(short)1,getStringIpToInt("192.168.58.10"));
     }
 }

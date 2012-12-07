@@ -49,7 +49,6 @@ import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
 import net.floodlightcontroller.core.types.MacVlanPair;
 import net.floodlightcontroller.core.types.PortIpPair;
-import net.floodlightcontroller.core.internal.OFSwitchImpl;
 import net.floodlightcontroller.counter.ICounterStoreService;
 import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.restserver.IRestApiService;

@@ -202,7 +202,7 @@ public class DCM
      * @return The port the host is on
      */
     public Short getFromPortMap(IOFSwitch sw, long mac, short vlan) {
-        if (vlan == (short) 0xffff) {
+    	if (vlan == (short) 0xffff) {
             vlan = 0;
         }
         Map<MacVlanPair,Short> swMap = macVlanToSwitchPortMap.get(sw);
@@ -725,7 +725,9 @@ public class DCM
 				match.setWildcards(((Integer)sw.getAttribute(IOFSwitch.PROP_FASTWILDCARDS)).intValue()
 	                    & ~OFMatch.OFPFW_IN_PORT
 	                    & ~OFMatch.OFPFW_DL_VLAN & ~OFMatch.OFPFW_DL_SRC & ~OFMatch.OFPFW_DL_DST
-	                    & ~OFMatch.OFPFW_NW_SRC_MASK & ~OFMatch.OFPFW_NW_DST_MASK);
+	                    //& ~OFMatch.OFPFW_NW_SRC_MASK & ~OFMatch.OFPFW_NW_DST_MASK
+	                    &~OFMatch.OFPFW_ALL //require exactly testing
+	                    );
 				log.debug("REMOTE: will add flow {}",match);
 				//this.pushPacket(sw, match, pi, remote.port);
 	            //this.writeFlowMod(sw, OFFlowMod.OFPFC_ADD, OFPacketOut.BUFFER_ID_NONE, match, remote.port);
@@ -948,13 +950,22 @@ public class DCM
         
         //crl-sw1
         this.addToPortIpMap(new String("00:00:08:00:27:85:ca:de"),Long.parseLong("080027abb6a5",16),
-        		(short)0,(short)1,getStringIpToInt("192.168.58.10"));   
+        		(short)0,(short)1,getStringIpToInt("192.168.58.10"));
+      	
         //crl-sw2
         this.addToPortIpMap(new String("00:00:08:00:27:ab:b6:a5"),Long.parseLong("08002785cade",16),
         		(short)0,(short)1,getStringIpToInt("192.168.57.10"));
         
+        //learning-switch
+      //crl-sw1
+        //this.addToPortIpMap(new String("00:00:08:00:27:85:ca:de"),Long.parseLong("0a0027000001",16),
+        		//(short)0,(short)1,getStringIpToInt("192.168.58.10"));
+      	
+        //crl-sw2
+        //this.addToPortIpMap(new String("00:00:08:00:27:ab:b6:a5"),Long.parseLong("0a0027000002",16),
+        		//(short)0,(short)1,getStringIpToInt("192.168.57.10"));
         //thu-sw1
-        this.addToPortIpMap(new String("00:00:08:00:27:ec:85:70"),Long.parseLong("080027abb6a5",16),
-        		(short)0,(short)1,getStringIpToInt("192.168.58.10"));
+        //this.addToPortIpMap(new String("00:00:08:00:27:ec:85:70"),Long.parseLong("080027abb6a5",16),
+        //		(short)0,(short)1,getStringIpToInt("192.168.58.10"));
     }
 }

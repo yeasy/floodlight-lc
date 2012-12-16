@@ -128,7 +128,17 @@ public enum OFType {
                             public OFMessage instantiate() {
                                 return new OFBarrierReply();
                             }}),
-    PACKET_REMOTE       (20, OFPacketRemote.class, new Instantiable<OFMessage>() {
+    QUEUE_GET_CONFIG_REQUEST    (20, OFQueueGetConfigRequest.class, new Instantiable<OFMessage>() {
+                                    @Override
+                                    public OFMessage instantiate() {
+                                        return new OFQueueGetConfigRequest();
+                                    }}),
+    QUEUE_GET_CONFIG_REPLY      (21, OFQueueGetConfigReply.class, new Instantiable<OFMessage>() {
+                                    @Override
+                                    public OFMessage instantiate() {
+                                        return new OFQueueGetConfigReply();
+                                    }}),
+    PACKET_REMOTE       (22, OFPacketRemote.class, new Instantiable<OFMessage>() {
 					        @Override
 					        public OFMessage instantiate() {
 					            return new OFPacketRemote();

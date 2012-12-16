@@ -27,3 +27,4 @@ net.floodlightcontroller.firewall.Firewall
 net.floodlightcontroller.mactracker.MACTracker
 net.floodlightcontroller.pktinhistory.PktInHistory
 net.floodlightcontroller.dcm.DCM
+net.floodlightcontroller.loadbalancer.LoadBalancer

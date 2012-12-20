@@ -951,10 +951,20 @@ public class DCM
         //crl-sw1
         this.addToPortIpMap(new String("00:00:08:00:27:85:ca:de"),Long.parseLong("080027abb6a5",16),
         		(short)0,(short)1,getStringIpToInt("192.168.58.10"));
+        this.addToPortIpMap(new String("00:00:08:00:27:85:ca:de"),Long.parseLong("080027b0d578",16),
+        		(short)0,(short)1,getStringIpToInt("192.168.59.10"));
       	
         //crl-sw2
         this.addToPortIpMap(new String("00:00:08:00:27:ab:b6:a5"),Long.parseLong("08002785cade",16),
         		(short)0,(short)1,getStringIpToInt("192.168.57.10"));
+        this.addToPortIpMap(new String("00:00:08:00:27:85:ca:de"),Long.parseLong("080027b0d578",16),
+        		(short)0,(short)1,getStringIpToInt("192.168.59.10"));
+        
+        //crl-sw3
+        this.addToPortIpMap(new String("00:00:08:00:27:b0:d5:78"),Long.parseLong("08002785cade",16),
+        		(short)0,(short)1,getStringIpToInt("192.168.57.10"));
+        this.addToPortIpMap(new String("00:00:08:00:27:b0:d5:78"),Long.parseLong("080027abb6a5",16),
+        		(short)0,(short)1,getStringIpToInt("192.168.58.10"));
         
         //learning-switch
       //crl-sw1
